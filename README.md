@@ -2,6 +2,8 @@
 
 URL を渡すとスクリーンショットが返る、**Cloudflare Workers の isolate の中だけで動く**小さなブラウザ。Chromium は使わない。
 
+デモ: <https://not-kitesurf.aiji42.dev>
+
 ```
 GET /shot?url=https://example.com  ->  image/png
 ```

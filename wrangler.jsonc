@@ -2,7 +2,10 @@
   "name": "browser-on-workers",
   "main": "src/worker.js",
   "compatibility_date": "2026-09-01",
-  "workers_dev": true,
+  // workers.dev のサブドメインはアカウント名が出てしまうので閉じる。
+  // 本物ではないと名前で言ってしまうドメインだけを開ける
+  "workers_dev": false,
+  "routes": [{ "pattern": "not-kitesurf.aiji42.dev", "custom_domain": true }],
   // Rust 側の Wasm はバンドルに同梱する
   "rules": [
     { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": false }

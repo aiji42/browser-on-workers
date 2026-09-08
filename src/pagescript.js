@@ -441,6 +441,26 @@ if (globalThis.__result !== undefined) {
   try { E.report.pageResult = JSON.parse(JSON.stringify(globalThis.__result)); } catch (e) { /* 持ち帰れないものは捨てる */ }
 }
 
+// React が本当に DOM を掴んだかを見る。
+//
+// React は container とその子に __reactContainer / __reactFiber で始まるキーを
+// 直接付ける。絵だけ見ても SSR の HTML と区別が付かないので、
+// これが付いているかどうかでハイドレーションの成否を判定する
+if (E.report.dom === 'ok') {
+  try {
+    const seen = new Set();
+    const scan = (n, depth) => {
+      if (!n || depth > 2) return;
+      for (const k of Object.keys(n)) {
+        if (k.startsWith('__react') || k.startsWith('_react')) seen.add(k.split('$')[0]);
+      }
+      for (const c of n.childNodes ?? []) scan(c, depth + 1);
+    };
+    scan(globalThis.document.documentElement, 0);
+    E.report.reactKeys = [...seen].slice(0, 6);
+  } catch (e) { E.report.reactKeys = 'err: ' + String(e && e.message).slice(0, 80); }
+}
+
 // 描く直前の DOM を少しだけ持ち帰る。JS が本当に書き換えたのかを外から見るため
 if (E.report.dom === 'ok') {
   try {

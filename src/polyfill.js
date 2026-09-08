@@ -58,6 +58,43 @@ export const POLYFILL = `(function () {
     w.performance.now = function () { tick += 0.1; return tick; };
   }
 
+  // setImmediate / MessageChannel。
+  //
+  // React 18 のスケジューラは、仕事をマクロタスクに逃がすときに
+  // setImmediate -> MessageChannel -> setTimeout の順で使えるものを探す。
+  // vibey-script はこの 2 つを持っていないので setTimeout に落ちるが、
+  // V8 経路 (動的 Worker) では両方を塞いである。**同じ顔を与えないと
+  // 比べたときに engine の差なのか shim の穴なのか分からない** ので、
+  // ここでも setTimeout に寄せて揃える
+  if (typeof w.setImmediate !== 'function') {
+    w.setImmediate = function (fn) {
+      var rest = Array.prototype.slice.call(arguments, 1);
+      return w.setTimeout(function () { fn.apply(null, rest); }, 0);
+    };
+    w.clearImmediate = function (id) { return w.clearTimeout(id); };
+  }
+  if (typeof w.MessageChannel !== 'function') {
+    w.MessageChannel = function MessageChannel() {
+      var mk = function () {
+        return {
+          onmessage: null, start: function () {}, close: function () {},
+          addEventListener: function (t, fn) { if (t === 'message') this.onmessage = fn; },
+          removeEventListener: function () {}
+        };
+      };
+      var p1 = mk();
+      var p2 = mk();
+      var send = function (to, data) {
+        w.setTimeout(function () {
+          if (typeof to.onmessage === 'function') to.onmessage({ data: data, target: to });
+        }, 0);
+      };
+      p1.postMessage = function (d) { send(p2, d); };
+      p2.postMessage = function (d) { send(p1, d); };
+      return { port1: p1, port2: p2 };
+    };
+  }
+
   // localStorage / sessionStorage: メモリの中だけ。描画のあいだしか生きない
   function makeStorage() {
     var map = {};

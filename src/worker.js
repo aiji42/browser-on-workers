@@ -356,6 +356,11 @@ export default {
         t = Date.now();
         const { rgba, report } = await renderInV8(env, request, {
           html, baseUrl, width: w, height: h, resources, fonts,
+          // 同じページなら同じ動的 Worker が使い回される (結果はモジュールの
+          // 評価中に出ているので、2 回目はほぼ 0 秒で返る)。計測のときは
+          // 毎回作らせないと cold の値が取れない
+          id: url.searchParams.get('fresh')
+            ? `page:fresh:${Math.random()}` : undefined,
         });
         timing.pageScriptMs = Date.now() - t;
 
@@ -368,7 +373,11 @@ export default {
             'content-type': 'image/png',
             'cache-control': 'no-store',
             'x-timing': JSON.stringify(timing),
-            'x-page-script': JSON.stringify(report),
+            // 非 ASCII を入れると Workers が警告を出すので落とす。
+            // ページの中身 (bodyHtml) は ?debug=1 のときだけ
+            'x-page-script': JSON.stringify(
+              url.searchParams.get('debug') ? report : { ...report, bodyHtml: undefined },
+            ).replace(/[^\x20-\x7e]/g, '?'),
           },
         });
       } catch (e) {

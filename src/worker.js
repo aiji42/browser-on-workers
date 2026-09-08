@@ -10,6 +10,7 @@
 // Chromium は使わない。ブラウザの処理は全部この isolate の中で終わる。
 
 import { encodePNG } from './png.js';
+import { fetchHtml, inlineStylesheets } from './outbound.js';
 
 // Rust 側。wasm-bindgen の glue と、その中身の Wasm。
 // wrangler.jsonc の rules で .wasm は CompiledWasm として読み込まれる
@@ -40,24 +41,6 @@ const describeError = (e) => {
 
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 800;
-
-// ページを取ってくる口をここ 1 つに絞る。Kitesurf が SandboxOutbound で
-// やっているのと同じ考え方で、外に出る経路を 1 箇所にまとめておく。
-async function fetchDocument(url) {
-  const res = await fetch(url, {
-    headers: {
-      // 素の fetch だと弾くサイトがあるので、ブラウザらしい形にしておく
-      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'accept-language': 'en-US,en;q=0.9',
-      'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) browser-on-workers/0.1',
-    },
-    redirect: 'follow',
-  });
-  if (!res.ok) throw new Error(`origin returned ${res.status}`);
-  const type = res.headers.get('content-type') ?? '';
-  if (!/html|xml|text\/plain/.test(type)) throw new Error(`unsupported content-type: ${type}`);
-  return await res.text();
-}
 
 const usage = `browser-on-workers
 
@@ -103,13 +86,27 @@ export default {
       await ensureWasm();
 
       let t = Date.now();
-      const html = inlineHtml ?? await fetchDocument(target);
+      let html = inlineHtml ?? '';
+      let baseUrl = target ?? '';
+      if (target) {
+        const got = await fetchHtml(target);
+        html = got.html;
+        baseUrl = got.finalUrl;
+      }
       timing.fetchMs = Date.now() - t;
+
+      // Blitz はサブリソースを取りに行かない。外部 CSS は Worker が取ってきて
+      // <style> として差し込む。これが無いと実ページは素の文書として描かれる
+      t = Date.now();
+      const sheets = await inlineStylesheets(html, baseUrl || 'https://inline.invalid/');
+      html = sheets.html;
+      timing.cssMs = Date.now() - t;
+      timing.css = { fetched: sheets.fetched, skipped: sheets.skipped, bytes: sheets.cssBytes };
 
       t = Date.now();
       // base URL を渡す。blitz-dom は <link href="/x.css"> のような相対参照を
       // これに対して解決する。無いと (base になれない data: URL が既定なので) panic する
-      const rgba = render_png_rgba(html, target ?? '', new Uint8Array(fontTtf), width, height);
+      const rgba = render_png_rgba(html, baseUrl, new Uint8Array(fontTtf), width, height);
       timing.renderMs = Date.now() - t;
 
       t = Date.now();

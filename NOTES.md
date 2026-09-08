@@ -369,6 +369,74 @@ cpuTime に入らず、tail にも出ない。** だから B と C の CPU を�
 つまり **Boa は「要らない」のではなく、「別のものを払っている」**。
 V8 を使うには資源を先に全部揃える必要があり、それには捨てる描画が要る。
 
+## 構成 A: 動的 Worker の handler で Boa に走らせる
+
+公式の Kitesurf にいちばん近い形。`/ashot`。
+
+- ページの JS は **Boa** (handler では eval が使えないが、Boa は Wasm の中の
+  インタプリタなので関係ない)
+- 資源は **解釈の途中で取りに行く**。`NetProvider::fetch` が受け取った
+  `Box<dyn NetHandler>` を溜めておき、JS が fetch してから `sess_provide` で答える
+- ネットワークは `globalOutbound` で親の専用 entrypoint に通す (SandboxOutbound)
+
+### 捨てるための描画が要らない
+
+構成 B は「何が必要か」を知るために親で 1〜3 回描き捨てる。
+構成 A は document を開いたまま資源が後から届くので、それが要らない。
+
+実測 (1000x800、`fresh=1`)。
+
+| ページ | settle の周回 | 取得 | 残った pending | 結果 |
+| --- | --- | --- | --- | --- |
+| ja.wikipedia「ウェブブラウザ」 | 2 (19 + 6) | 25 本 423 KB | 0 | 92 KB の PNG |
+| MDN `font-family` | 2 (22 + 31) | 53 本 1.05 MB | 0 | 56 KB の PNG、JS エラー 0 |
+| TodoMVC | 1 (3) | 3 本 248 KB | 0 | 20 KB の PNG |
+| react.dev | 2 (47 + 44) | 91 本 3.3 MB | 0 | **白紙 (5 KB)** |
+
+**2 周で収束する。** 1 周目が HTML に書かれているもの、2 周目がその CSS の中から
+参照されるもの (`background-image`、`@font-face`)。
+
+### 引っかかったところ
+
+`<script src>` は **blitz-dom の `NetProvider` を通らない。** vibey-script の
+`ScriptFetcher` が `execute_scripts` の最中に**同期で**引く。しかも
+`execute_scripts` は 2 度走らない。だからそのとき手元に無いスクリプトは
+**永久に飛ばされる。** `sess_open` が `<script src>` を「handler の無い保留」として
+先に積んでおき、JS 側は **pending を 0 にしてから `sess_run_scripts` を呼ぶ**。
+
+もう 1 つ、blitz-dom 側の穴。**後から届いた `@import` は黙って効かない。**
+要求はされる (保留に出る) が、親のシートは既に stylist に入っていて、
+入れ子の応答が `Resource::None` として捨てられる。カスケードの組み直しが無い。
+JS 側からは成功と区別が付かない。回避は `sess_open` より前に
+`add_resource` で渡しておくことだけ。
+
+## Boa の RuntimeLimitError は、ページの try/catch では捕まらない
+
+暴走を止めるために `RECURSION_LIMIT = 160` を置いている。超えると
+
+```
+Uncaught JS error in <inline script>:
+RuntimeLimitError: reached the maximum number of recursive calls on this execution
+```
+
+**呼び出しを 1 つずつ `try/catch` で包んでも捕まらない。** 包んだ中で
+上限に当たると、その `catch` も走らず、**そのスクリプトの残り全部が飛ぶ。**
+
+深さを 1 段ずつ上げて、DOM に書きながら測った結果。
+
+| 深さ | Boa 経路 | V8 経路 |
+| --- | --- | --- |
+| 50 / 100 / 140 / 150 / 155 | 通る | 通る |
+| **160** | **ここでスクリプトが終わる** | 通る |
+| 170 / 200 / 300 / 500 / 1000 | (到達しない) | 通る (`done` まで) |
+
+ただし **react.dev はこの上限には当たっていない。** 構成 A で react.dev を
+描くと `jsErrors` は 0 件で、それでも白紙になる。上限に当たっていれば
+上のエラーが出るはずなので、白紙の原因は別。候補は `LOOP_ITERATION_LIMIT`
+(500,000、フレームごとの通算でループを抜けても戻らない。こちらは catch できる
+例外なので、React が自分で捕まえてクライアント描画にやり直す形になりうる) と
+`SCRIPT_BUDGET` (1.5 秒、スクリプトの切れ目でしか見ない)。
+
 ## SandboxOutbound は、専用の entrypoint にしないと再帰する
 
 `globalOutbound` に Fetcher を渡すと、**子 Worker の `fetch` が全部そこへ届く。**

@@ -31,6 +31,11 @@ pub mod script;
 /// DOM だけこちらに置くための入口
 pub mod dom;
 
+/// document を 1 つ生かしたまま、サブリソースを**後から** JS が渡す
+/// (`sess_open` / `sess_pending` / `sess_provide` / `sess_settle` / `sess_paint`)。
+/// 表に無い URL を空で返して全部組み直す 2 パス描画の代わりになる入口
+pub mod session;
+
 /// テストが読むフォントの場所。`scripts/build-fonts.mjs` の出力先は
 /// `public/fonts/` (Worker が Static Assets として配る場所) だが、
 /// 以前は `fonts/` だったので、両方を見る

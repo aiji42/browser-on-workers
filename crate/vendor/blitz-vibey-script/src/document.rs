@@ -117,12 +117,26 @@ impl ScriptDocument {
     ///   until the host runs out of CPU time. The count is per call frame and
     ///   is never reset, so all the loops in one function share the budget.
     /// - `recursion`: how deep JS calls may nest (Boa's default is 512).
-    ///   Lower it on hosts with a small native stack: Boa recurses on the host
-    ///   stack, and overflowing that is a hard crash, not a JS error.
+    ///   Note that plain JS-to-JS calls do *not* grow the host stack: Boa's
+    ///   `Vm::run` is a single loop and call frames live in a heap `Vec`. The
+    ///   host stack only grows when the host re-enters the VM (accessors,
+    ///   native functions calling back into JS), which is what Boa counts as
+    ///   `host_call_depth` and adds to this depth. So lower this on hosts with
+    ///   a small native stack to bound *that* form, not ordinary recursion.
+    ///   Independently of this setting, Boa's own value-stack limit
+    ///   (`RuntimeLimits::stack_size`, 10240 slots by default, not settable
+    ///   here) caps plain recursion at roughly 1130 frames.
     ///
-    /// Exceeding a limit is an ordinary JS exception, so it lands in
-    /// [`take_js_errors`](Self::take_js_errors) and the document keeps
-    /// whatever DOM the script had built up to that point.
+    /// Exceeding either limit is **not** an ordinary JS exception. Boa wraps
+    /// it in `EngineError`, which `JsError::is_catchable` reports as
+    /// uncatchable: the VM unwinds every frame without looking for a `catch`
+    /// handler and returns the error to the Rust caller. So the script that
+    /// hit the limit stops right there — the page's own `try`/`catch` never
+    /// runs, and neither does anything after it. The error lands in
+    /// [`take_js_errors`](Self::take_js_errors), the document keeps whatever
+    /// DOM that script had built up to that point, and later `<script>`
+    /// elements still run (each one is a separate `Context::eval`, and the
+    /// context is not poisoned).
     pub fn with_runtime_limits(mut self, loop_iterations: u64, recursion: usize) -> Self {
         let limits = self.runtime.context.runtime_limits_mut();
         limits.set_loop_iteration_limit(loop_iterations);

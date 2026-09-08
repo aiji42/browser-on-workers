@@ -251,7 +251,7 @@ export const DEMO_SHOTS = [
   [
     'https://react.dev/', 1000, 780,
     'react.dev',
-    'SSG。ページの JS を動かすと React のハイドレーションが本文を消すので、JS を切って描き直したもの',
+    'SSG。ページの JS を実行して、React のハイドレーションが通った状態',
   ],
   [
     'https://todomvc.com/examples/react/dist/', 1000, 780,

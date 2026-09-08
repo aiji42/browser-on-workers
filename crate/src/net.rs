@@ -180,7 +180,7 @@ impl NetProvider for TableNetProvider {
 /// WHATWG URL の実装なので、同じ絶対 URL を組む。ただし `https://example.com` のように
 /// path の無いものは JS 側で `https://example.com/` になるので、こちら側も `Url::parse`
 /// を通して同じ形に揃えておく (揃えないと末尾のスラッシュだけで外れる)
-fn normalize(url: &str) -> String {
+pub(crate) fn normalize(url: &str) -> String {
     match url::Url::parse(url) {
         Ok(u) => strip_fragment(u.as_str()).to_string(),
         // 絶対 URL として読めないものは、渡された文字列のまま鍵にする
@@ -188,11 +188,25 @@ fn normalize(url: &str) -> String {
     }
 }
 
-fn strip_fragment(url: &str) -> &str {
+pub(crate) fn strip_fragment(url: &str) -> &str {
     match url.split_once('#') {
         Some((head, _)) => head,
         None => url,
     }
+}
+
+/// グローバルの表 (`add_resource` が溜めるもの) を鍵 1 つで引く。
+///
+/// `session` の `NetProvider` が、応答を待たせる前にここを見る。JS が
+/// 先に渡してあった資源は待たせずに返したいので (「先に全部渡す」と
+/// 「要求されてから渡す」を混ぜられるようにする)。
+///
+/// `TableNetProvider` のように表を丸ごとコピーしないのは、session が
+/// document を開いたあとに `add_resource` された資源も拾いたいから。
+/// lock はこの関数の中で閉じるので、`fetch` の再入とは競合しない
+pub(crate) fn global_lookup(key: &str) -> Option<Bytes> {
+    let guard = RESOURCES.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref()?.get(key).cloned()
 }
 
 /// サブリソースを 1 つ登録する。`render_png_rgba` より先に、資源ごとに 1 回呼ぶ。

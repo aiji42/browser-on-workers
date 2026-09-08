@@ -48,7 +48,8 @@ use wasm_bindgen::prelude::*;
 use crate::net::TableNetProvider;
 
 /// vello_cpu の描画面は u16。辺の長さはここまで
-const MAX_SIDE: u32 = 65535;
+/// (`session` の `sess_open` も同じ範囲で弾く)
+pub(crate) const MAX_SIDE: u32 = 65535;
 
 /// HTML の要素の名前空間。`markup5ever` の `ns!(html)` は `namespace_url!` を
 /// 展開するマクロで、両方を `use` しないと通らない。文字列から作っても

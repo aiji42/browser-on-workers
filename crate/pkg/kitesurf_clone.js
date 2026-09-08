@@ -1163,6 +1163,255 @@ export function resource_urls() {
 }
 
 /**
+ * document を捨てる。handle はもう使えない (使っても panic はしない)
+ * @param {number} doc
+ */
+export function sess_close(doc) {
+    wasm.sess_close(doc);
+}
+
+/**
+ * この document の JS context で文字列を評価する。JS context が無ければ `false`。
+ *
+ * `sess_run_scripts` のあとの document でも動く (同じ context がそのまま
+ * 残っている)。CDP の `Runtime.evaluate` の下敷き。
+ *
+ * 返すのは「評価できる document だったか」だけ。値は返らないので、結果は
+ * DOM に書き出して読むか、`sess_paint` で見る。例外は `sess_js_errors` に出る
+ * @param {number} doc
+ * @param {string} code
+ * @returns {boolean}
+ */
+export function sess_eval(doc, code) {
+    const ptr0 = passStringToWasm0(code, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.sess_eval(doc, ptr0, len0);
+    return ret !== 0;
+}
+
+/**
+ * 待っている URL 1 つに「取れなかった」と答える (空のバイト列で答える)。
+ *
+ * 取れなかったからといって黙って捨ててはいけない。`<head>` の
+ * `<link rel="stylesheet">` は `pending_critical_resources` に残り、
+ * `doc.resolve` が「まだ描いてはいけない」と判断して**永久に何も描かなくなる**
+ * (`net.rs` の頭に書いたのと同じ話)。
+ *
+ * 空の CSS は中身の無い stylesheet として読まれ、画像はデコードに失敗して
+ * 「読めなかった画像」になり、フォントは形式不明として捨てられる。
+ * どれも描画は続く
+ * @param {number} doc
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function sess_fail(doc, url) {
+    const ptr0 = passStringToWasm0(url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.sess_fail(doc, ptr0, len0);
+    return ret !== 0;
+}
+
+/**
+ * この document で拾われなかった JS の例外。
+ *
+ * グローバルの `last_js_errors` は描画のたびに置き換わるが、session は
+ * 1 つの document を何ターンも生かすので、こちらは document ごとに
+ * **溜める** (`sess_run_scripts` / `sess_eval` / `sess_run_timers` のぶんが
+ * 順に並ぶ)。読んでも消えない。上限は 256 で、古いものから落ちる
+ * @param {number} doc
+ * @returns {string[]}
+ */
+export function sess_js_errors(doc) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.sess_js_errors(retptr, doc);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayJsValueFromWasm0(r0, r1);
+        wasm.__wbindgen_export4(r0, r1 * 4, 4);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * document を開く。**`<script>` は実行しない** ([`sess_run_scripts`] が実行する)。
+ *
+ * サブリソースは表から引かずに**応答を待たせる**。開いた直後に
+ * `sess_pending` を読むと、`<head>` の stylesheet や `<img>` のように
+ * パースの時点で要求された URL が並んでいる。
+ *
+ * - 返り値は 0 でない document handle。失敗したら 0 で、理由は `last_panic()`
+ * - `run_js` を真にすると Boa の context 付きで組む。`<script>` の実行は
+ *   `sess_run_scripts` まで待つ。`<script src>` の中身は資源のループが
+ *   1 周してからでないと手元に無いので、ここで走らせると外部スクリプトが
+ *   丸ごと飛ばされる (`execute_scripts` は 2 度目を走らせない)
+ * - フォントは `add_font` で先に渡しておく。サブリソースは `add_resource` で
+ *   先に渡してもよい (渡してあるものは待たせずに返す)
+ * @param {string} html
+ * @param {string} base_url
+ * @param {number} width
+ * @param {number} height
+ * @param {boolean} run_js
+ * @returns {number}
+ */
+export function sess_open(html, base_url, width, height, run_js) {
+    const ptr0 = passStringToWasm0(html, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(base_url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.sess_open(ptr0, len0, ptr1, len1, width, height, run_js);
+    return ret >>> 0;
+}
+
+/**
+ * 開いている session の数 (取りこぼしの確認用)
+ * @returns {number}
+ */
+export function sess_open_count() {
+    const ret = wasm.sess_open_count();
+    return ret >>> 0;
+}
+
+/**
+ * いまの DOM を RGBA8 に描く。返り値は `width * height * 4` バイト
+ * (`dom_paint` と同じ中身)。handle が無ければ空の `Vec`。
+ *
+ * 待っている `<head>` の stylesheet が 1 つでもあると、blitz-dom は
+ * レイアウトを付けないので**白い絵**になる。描く前に `sess_pending` を
+ * 空にすること
+ * @param {number} doc
+ * @returns {Uint8Array}
+ */
+export function sess_paint(doc) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.sess_paint(retptr, doc);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * まだ応答を待っている URL。要求された順、重複なし。
+ *
+ * - fragment を落とした絶対 URL (`fetch` にそのまま渡せる http / https)
+ * - `data:` は Rust 側で解くので入らない
+ * - SVG sprite の `icons.svg#a` と `icons.svg#b` は 1 本にまとまる
+ * - `<script src>` の URL も入る (blitz-dom は script を取りに行かないので、
+ *   `sess_open` が並べておく)
+ *
+ * JS はこれを取ってきて `sess_provide` か `sess_fail` で全部答える。
+ * **1 つでも答えないまま置くと、`<head>` の stylesheet を待っている
+ * document は永久に描かれない**
+ * @param {number} doc
+ * @returns {string[]}
+ */
+export function sess_pending(doc) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.sess_pending(retptr, doc);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayJsValueFromWasm0(r0, r1);
+        wasm.__wbindgen_export4(r0, r1 * 4, 4);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * 待っている URL 1 つに中身を渡す。handler を持っていた (= blitz-dom が
+ * 実際に待っていた) なら `true`。
+ *
+ * - `url` は `sess_pending` が返した文字列をそのまま渡す
+ * - 同じ URL を待っている handler は全部答える
+ * - 待っていない URL でも中身は覚える。あとで要求されたときに待たせずに返す
+ * - `<script src>` の待ちには handler が無いので `false` が返る
+ *   (中身は覚えているので `sess_run_scripts` から引ける)
+ *
+ * 渡した中身が絵に入るのは次の `sess_settle` から
+ * @param {number} doc
+ * @param {string} url
+ * @param {Uint8Array} bytes
+ * @returns {boolean}
+ */
+export function sess_provide(doc, url, bytes) {
+    const ptr0 = passStringToWasm0(url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(bytes, wasm.__wbindgen_export);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.sess_provide(doc, ptr0, len0, ptr1, len1);
+    return ret !== 0;
+}
+
+/**
+ * ページの `<script>` を Boa で実行する。JS 無しで開いた document では `false`。
+ *
+ * 2 度呼んでも 2 度は走らない (`execute_scripts` 自身も同じ約束を持っている)。
+ * 走らせる前に**実時間の予算を貼り直す**。`sess_open` から実際の実行までに
+ * JS が資源を取りに行っている (実時間で数秒) ので、組んだ時点の予算のままだと
+ * 1 本も実行されずに「out of script budget」だけが残る。
+ *
+ * `<script src>` の中身は `sess_provide` で渡してあること。手元に無い
+ * スクリプトは飛ばされ、`sess_js_errors` にその旨が残る
+ * @param {number} doc
+ * @returns {boolean}
+ */
+export function sess_run_scripts(doc) {
+    const ret = wasm.sess_run_scripts(doc);
+    return ret !== 0;
+}
+
+/**
+ * 溜まっているタイマー (setTimeout / setInterval / requestAnimationFrame) を
+ * 仮想時間で進める。最大 `limit` ターン回して、実際に何か走ったターンの数を返す。
+ *
+ * 時間は実時間では待たない。次のタイマーの時刻へ飛ぶだけ。進める先は
+ * **呼ぶたびに** 「いまの仮想時計 + 1 秒」で引き直すが、時計はタイマーが
+ * 走ったときにしか進まない。つまり `setTimeout(f, 5000)` のように 1 秒より
+ * 先に置かれたタイマーは、その間に走るタイマーが無ければ何度呼んでも走らない
+ * (スクリーンショットは「読み込み直後の絵」なので、そこは切ってある)。
+ *
+ * `sess_run_scripts` も最後にタイマーを 1 度回すので、`<script>` を走らせた
+ * 直後に溜まっているぶんはそこで消えている。ここで回るのは、そのときの
+ * 地平の外にあったタイマーと、走ったタイマーが新しく張ったタイマー。
+ *
+ * `<script>` を走らせる前に呼んでも何も起きない (タイマーを張るのは JS なので、
+ * 実行前に溜まっているタイマーは 1 つも無い)
+ * @param {number} doc
+ * @param {number} limit
+ * @returns {number}
+ */
+export function sess_run_timers(doc, limit) {
+    const ret = wasm.sess_run_timers(doc, limit);
+    return ret >>> 0;
+}
+
+/**
+ * スタイルとレイアウトを取り直して、**まだ待っている URL の数**を返す。
+ *
+ * `sess_provide` で渡した中身はここで document に入る。入った結果として
+ * 新しい URL が要求されることがある (外部 CSS の中の `@import` や
+ * `background-image`、`@font-face` の web font は、その CSS が届いて初めて
+ * 読める)。なので JS は 0 になるまで `sess_pending` → `sess_provide` →
+ * `sess_settle` を回す
+ * @param {number} doc
+ * @returns {number}
+ */
+export function sess_settle(doc) {
+    const ret = wasm.sess_settle(doc);
+    return ret >>> 0;
+}
+
+/**
  * この generic family では、この family を先に探す、と決める。
  *
  * `set_generic_lead("monospace", vec!["mono", "jp"])` のように呼ぶと、CSS が

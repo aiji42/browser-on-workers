@@ -137,9 +137,19 @@
       set textContent(v) { need('dom_set_text_content')(doc, this.__id, v == null ? '' : String(v)); }
       get innerHTML() { return need('dom_inner_html')(doc, this.__id); }
       set innerHTML(v) {
+        // 子は作り直されるので、その子孫の包みだけ捨てる。
+        // 全部捨てると `document.body` の同一性まで壊れて、
+        // 別のノードに付けたイベントの登録先も失われる
+        const stale = [];
+        const walk = (id) => {
+          for (const child of need('dom_child_nodes')(doc, id)) {
+            stale.push(child);
+            walk(child);
+          }
+        };
+        walk(this.__id);
         need('dom_set_inner_html')(doc, this.__id, v == null ? '' : String(v));
-        // 子が作り直されるので、古い包みを捨てる
-        wrappers.forEach((w, id) => { if (id !== this.__id) wrappers.delete(id); });
+        for (const id of stale) wrappers.delete(id);
       }
       get outerHTML() { const f = opt('dom_outer_html'); return f ? f(doc, this.__id) : ''; }
       get innerText() { return this.textContent; }
@@ -297,6 +307,8 @@
       set cookie(_v) {},
       write() {}, writeln() {}, open() {}, close() {},
       get activeElement() { return this.body; },
+      // React はここから window を辿って、そこのコンストラクタを見る
+      get defaultView() { return globalThis; },
       get scrollingElement() { return this.documentElement; },
     };
     const docListeners = new Map();
@@ -305,6 +317,23 @@
     globalThis.Node = BlitzNode;
     globalThis.Element = BlitzNode;
     globalThis.HTMLElement = BlitzNode;
+
+    // instanceof の右辺になるものを置く。
+    //
+    // React DOM は `t instanceof e.HTMLIFrameElement` のように、
+    // window から辿ったコンストラクタで narrowing する。無いと
+    // 「Right-hand side of 'instanceof' is not an object」で止まる。
+    //
+    // ここは **BlitzNode と別のクラスにする**。同じにすると全ノードが
+    // iframe や input として真になって、React が違う枝に入る
+    for (const name of [
+      'HTMLIFrameElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'HTMLSelectElement',
+      'HTMLButtonElement', 'HTMLAnchorElement', 'HTMLImageElement', 'HTMLFormElement',
+      'HTMLCanvasElement', 'HTMLScriptElement', 'HTMLStyleElement', 'HTMLLinkElement',
+      'SVGElement', 'Text', 'Comment', 'DocumentFragment', 'Document', 'Window',
+    ]) {
+      if (!globalThis[name]) globalThis[name] = class {};
+    }
     globalThis.__domReady = () => {
       documentObject.readyState = 'interactive';
       documentObject.dispatchEvent({ type: 'DOMContentLoaded', target: documentObject });

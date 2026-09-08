@@ -91,6 +91,26 @@ const describeError = (e) => {
   };
 };
 
+// この Worker の**モジュールスコープ**で eval を試す。
+//
+// 動的 Worker のグローバルスコープでは通った。それが動的 Worker だけの性質なのか、
+// Workers 全般で「起動時だけは通る」のかで、話がまったく変わる。
+// ここはモジュールの評価中なので、後者ならこれも通るはず
+const EVAL_AT_MODULE_SCOPE = (() => {
+  try {
+    return `ok: ${eval('1+1')}`;
+  } catch (e) {
+    return `${e.name}: ${e.message}`;
+  }
+})();
+const NEW_FUNCTION_AT_MODULE_SCOPE = (() => {
+  try {
+    return `ok: ${new Function('return 1+1')()}`;
+  } catch (e) {
+    return `${e.name}: ${e.message}`;
+  }
+})();
+
 // 取りこぼしを回収して描き直す回数の上限。@import が段になっていると 2 周では終わらない
 const MAX_PASSES = 3;
 
@@ -279,6 +299,51 @@ export default {
           ...gotScripts.got.map((r) => ({ url: r.url, bytes: r.bytes })),
         ];
 
+        // ここが V8 経路のいちばん高い買い物。
+        //
+        // PageScript はモジュールの評価中に走る。そこは eval が通る代わりに
+        // fetch が通らないので、**足りない資源を後から取りに行けない**。
+        // HTML を見るだけでは、CSS の中の url() や @import、@font-face が
+        // 分からない。だから本体の Worker で一度描いて missed_resources() を
+        // 吐かせ、それを取ってから渡す。
+        //
+        // つまり V8 経路は「捨てるための描画」を先に 1〜3 回やる。
+        // Kitesurf が解釈の途中で取りに行けるのは、ページの JS を handler で
+        // 走らせているから。その代償が Boa
+        let decodedLeft = Math.max(0, DECODED_BUDGET - (imgs.decodedBytes ?? 0));
+        timing.discoverMs = 0;
+        timing.discoverPasses = 0;
+        timing.discoverFetchMs = 0;
+        timing.discovered = 0;
+        if (url.searchParams.get('discover') !== '0') {
+          // 探索の描画は本体の Worker 側の engine を使う
+          await ensureWasm(env, request);
+          clear_resources();
+          for (const r of resources) add_resource(r.url, r.bytes);
+          t = Date.now();
+          render_png_rgba_no_js(html, baseUrl, w, h);
+          timing.discoverMs += Date.now() - t;
+          timing.discoverPasses = 1;
+          for (let pass = 0; pass < MAX_PASSES; pass++) {
+            const missed = missed_resources();
+            if (!missed.length) break;
+            t = Date.now();
+            const more = await fetchResources(missed, baseUrl, deny, decodedLeft);
+            timing.discoverFetchMs += Date.now() - t;
+            decodedLeft = Math.max(0, decodedLeft - (more.decodedBytes ?? 0));
+            if (!more.got.length) break;
+            for (const r of more.got) {
+              add_resource(r.url, r.bytes);
+              resources.push({ url: r.url, bytes: r.bytes });
+              timing.discovered++;
+            }
+            t = Date.now();
+            render_png_rgba_no_js(html, baseUrl, w, h);
+            timing.discoverMs += Date.now() - t;
+            timing.discoverPasses++;
+          }
+        }
+
         // フォントも I/O では渡せないのでバイト列にして持たせる
         t = Date.now();
         const fonts = [];
@@ -399,7 +464,11 @@ export default {
       } catch (e) {
         out.newFunction = `${e.name}: ${e.message}`;
       }
-      return Response.json({ where: '本体の Worker', ...out });
+      return Response.json({
+        where: '本体の Worker',
+        handler: out,
+        moduleScope: { eval: EVAL_AT_MODULE_SCOPE, newFunction: NEW_FUNCTION_AT_MODULE_SCOPE },
+      });
     }
 
     // 動的 Worker の中で、ページのコードを V8 に渡してみる。

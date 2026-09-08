@@ -17,9 +17,9 @@
  * @returns {number}
  */
 export function add_font(bytes, family) {
-    const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_export);
+    const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_export2);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(family, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const ptr1 = passStringToWasm0(family, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.add_font(ptr0, len0, ptr1, len1);
     return ret >>> 0;
@@ -45,9 +45,9 @@ export function add_resource(url, bytes) {
     let deferred3_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(bytes, wasm.__wbindgen_export);
+        const ptr1 = passArray8ToWasm0(bytes, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
         wasm.add_resource(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
@@ -57,7 +57,7 @@ export function add_resource(url, bytes) {
         return getStringFromWasm0(r0, r1);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export3(deferred3_0, deferred3_1, 1);
+        wasm.__wbindgen_export4(deferred3_0, deferred3_1, 1);
     }
 }
 
@@ -88,7 +88,7 @@ export function font_families() {
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var v1 = getArrayJsValueFromWasm0(r0, r1);
-        wasm.__wbindgen_export3(r0, r1 * 4, 4);
+        wasm.__wbindgen_export4(r0, r1 * 4, 4);
         return v1;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
@@ -122,6 +122,38 @@ export function init() {
 }
 
 /**
+ * いま JS を実行する設定になっているか
+ * @returns {boolean}
+ */
+export function js_enabled() {
+    const ret = wasm.js_enabled();
+    return ret !== 0;
+}
+
+/**
+ * 直前の描画で JS が投げた、拾われなかった例外のメッセージ。
+ *
+ * 実行そのものは失敗しても描画は続く (そこまでの DOM が絵になる) ので、
+ * 「絵は出たが JS が途中で死んだ」を知るにはこれを見る。
+ * ループの上限に当たったときも `RuntimeLimitError` としてここに出る。
+ * 描画のたびに置き換わる
+ * @returns {string[]}
+ */
+export function last_js_errors() {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.last_js_errors(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayJsValueFromWasm0(r0, r1);
+        wasm.__wbindgen_export4(r0, r1 * 4, 4);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * 直前の panic のメッセージを取り出す (取り出すと消える)。無ければ `None` (JS では `undefined`)。
  * `render_png_rgba` が `RuntimeError: unreachable` で落ちた直後に呼ぶ
  * @returns {string | undefined}
@@ -135,7 +167,7 @@ export function last_panic() {
         let v1;
         if (r0 !== 0) {
             v1 = getStringFromWasm0(r0, r1);
-            wasm.__wbindgen_export3(r0, r1 * 1, 1);
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
         }
         return v1;
     } finally {
@@ -163,7 +195,7 @@ export function missed_resources() {
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var v1 = getArrayJsValueFromWasm0(r0, r1);
-        wasm.__wbindgen_export3(r0, r1 * 4, 4);
+        wasm.__wbindgen_export4(r0, r1 * 4, 4);
         return v1;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
@@ -189,6 +221,10 @@ export function missed_resources() {
  * - 表に無かった URL は `missed_resources` に残る。JS はそれを取ってきて
  *   `add_resource` で足し、もう 1 度これを呼ぶ (CSS の中から参照される画像は
  *   この 2 パスでしか拾えない)
+ * - ページの `<script>` は Boa で実行する。`set_js_enabled(false)` で切れる。
+ *   外部スクリプト (`<script src>`) も資源の表から引く (表に無ければ
+ *   `missed_resources` に出るので、2 パス目で当たる)。
+ *   拾われなかった例外は `last_js_errors` に出る
  * @param {string} html
  * @param {string} base_url
  * @param {number} width
@@ -198,15 +234,44 @@ export function missed_resources() {
 export function render_png_rgba(html, base_url, width, height) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(html, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const ptr0 = passStringToWasm0(html, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(base_url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const ptr1 = passStringToWasm0(base_url, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         const len1 = WASM_VECTOR_LEN;
         wasm.render_png_rgba(retptr, ptr0, len0, ptr1, len1, width, height);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var v3 = getArrayU8FromWasm0(r0, r1).slice();
-        wasm.__wbindgen_export3(r0, r1 * 1, 1);
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * `render_png_rgba` と同じだが、ページの `<script>` を実行しない。
+ *
+ * 実ページの崩れが JS のせいなのかを 1 回だけ切り分けたいときに使う
+ * (`set_js_enabled` と違って設定を残さない)
+ * @param {string} html
+ * @param {string} base_url
+ * @param {number} width
+ * @param {number} height
+ * @returns {Uint8Array}
+ */
+export function render_png_rgba_no_js(html, base_url, width, height) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(html, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(base_url, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.render_png_rgba_no_js(retptr, ptr0, len0, ptr1, len1, width, height);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
         return v3;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
@@ -224,11 +289,22 @@ export function resource_urls() {
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var v1 = getArrayJsValueFromWasm0(r0, r1);
-        wasm.__wbindgen_export3(r0, r1 * 4, 4);
+        wasm.__wbindgen_export4(r0, r1 * 4, 4);
         return v1;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
+}
+
+/**
+ * ページの `<script>` を実行するかどうかを切り替える。既定は実行する。
+ *
+ * 実ページの崩れが JS のせいなのかを切り分けたいときに `false` にする。
+ * wasm インスタンスに残るので、Workers では isolate が生きている間は有効
+ * @param {boolean} enabled
+ */
+export function set_js_enabled(enabled) {
+    wasm.set_js_enabled(enabled);
 }
 function __wbg_get_imports() {
     const import0 = {
@@ -242,6 +318,25 @@ function __wbg_get_imports() {
         },
         __wbg_error_51dc455fc840bcbc: function(arg0, arg1) {
             console.error(getStringFromWasm0(arg0, arg1));
+        },
+        __wbg_getRandomValues_436a51d0629d84e1: function() { return handleError(function (arg0, arg1) {
+            globalThis.crypto.getRandomValues(getArrayU8FromWasm0(arg0, arg1));
+        }, arguments); },
+        __wbg_getTime_65922ba0b59d55a7: function(arg0) {
+            const ret = getObject(arg0).getTime();
+            return ret;
+        },
+        __wbg_getTimezoneOffset_6e4850ad528ac37d: function(arg0) {
+            const ret = getObject(arg0).getTimezoneOffset();
+            return ret;
+        },
+        __wbg_new_0_35540e542ba689d2: function() {
+            const ret = new Date();
+            return addHeapObject(ret);
+        },
+        __wbg_new_180f1022bb6ee517: function(arg0) {
+            const ret = new Date(getObject(arg0));
+            return addHeapObject(ret);
         },
         __wbg_now_d1fb6650485d7f3e: function() {
             const ret = Date.now();
@@ -271,7 +366,12 @@ function __wbg_get_imports() {
             const ret = typeof window === 'undefined' ? null : window;
             return isLikeNone(ret) ? 0 : addHeapObject(ret);
         },
-        __wbindgen_generic_0000000000000001: function(arg0, arg1) {
+        __wbindgen_generic_0000000000000001: function(arg0) {
+            // Cast intrinsic for `F64 -> Externref`.
+            const ret = arg0;
+            return addHeapObject(ret);
+        },
+        __wbindgen_generic_0000000000000002: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
             return addHeapObject(ret);
@@ -341,6 +441,14 @@ function getUint8ArrayMemory0() {
 }
 
 function getObject(idx) { return heap[idx]; }
+
+function handleError(f, args) {
+    try {
+        return f.apply(this, args);
+    } catch (e) {
+        wasm.__wbindgen_export(addHeapObject(e));
+    }
+}
 
 let heap = new Array(1024).fill(undefined);
 heap.push(undefined, null, true, false);

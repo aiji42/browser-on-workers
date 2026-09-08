@@ -1,3 +1,7 @@
+[workspace]
+# vendor/ の blitz-vibey-script を同じ Cargo.lock / target で扱う
+members = ["vendor/blitz-vibey-script"]
+
 [package]
 name = "kitesurf_clone"
 version = "0.1.0"
@@ -26,10 +30,30 @@ parley = { version = "0.11.1", default-features = false, features = ["std"] }
 kurbo = "0.13.1"
 peniko = "0.6"
 wasm-bindgen = "0.2"
+# ページの <script> を Boa で実行する。crates.io には出ていない (upstream の
+# workspace の中だけにある) クレートなので、vendor/ に写して使う。
+# どのコミットから写したか、upstream との差は vendor/*/src/lib.rs の頭に書いてある
+blitz-vibey-script = { path = "vendor/blitz-vibey-script" }
 # base_url の検証 (blitz-dom が使っているのと同じクレート)
 url = "2"
+# wasm32 では `std::time::Instant` が動かない (panic する)。
+# JS の実行に実時間の予算を付けるので、performance.now に載った Instant を使う。
+# blitz-vibey-script が使っているのと同じクレート
+web-time = "1"
 # `<img src="data:...">` を JS を通さずに解く。usvg が既に引いているので wasm は増えない
 data-url = "0.3"
+
+# wasm32-unknown-unknown で Boa を動かすための feature。
+#
+# `js` は 3 つを同時に切り替える: 乱数 (`Math.random`) を getrandom の
+# wasm_js バックエンドに向け、時刻を `performance.now` / `Date.now` に向け、
+# `time` クレートをブラウザ時計に向ける。これが無いと getrandom が
+# 「wasm32-unknown-unknown は既定では非対応」でビルドを止める。
+#
+# blitz-vibey-script は boa を default feature で引いているので、ここで
+# feature を足すだけでよい (cargo は feature を足し合わせる)
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+boa_engine = { version = "0.22", features = ["js"] }
 
 [profile.release]
 opt-level = "s"
@@ -40,3 +64,11 @@ codegen-units = 1
 # strip でシンボル名 (custom:name セクション、約 4MB) を落とす
 panic = "abort"
 strip = true
+
+# blitz-vibey-script は crates.io に出ていない (upstream の workspace 内だけ) ので、
+# blitz 本体も同じコミットに合わせる。0.3.0-beta.2 の release から 20 コミットぶんの差
+[patch.crates-io]
+blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "4507cd7" }
+blitz-html = { git = "https://github.com/DioxusLabs/blitz", rev = "4507cd7" }
+blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "4507cd7" }
+blitz-paint = { git = "https://github.com/DioxusLabs/blitz", rev = "4507cd7" }

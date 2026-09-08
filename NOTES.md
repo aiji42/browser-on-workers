@@ -63,7 +63,7 @@ TrueType のまま置く。
 リポジトリに既にある `subset-font` に `targetFormat: 'truetype'` を渡すと
 woff2 から TTF を作れる。1 ウェイト 20 KB ほどに収まった。
 
-日本語はひらがな・カタカナ・CJK 統合漢字を入れて 2.2 MB。グリフ数にそのまま比例する。
+日本語はひらがな・カタカナ・CJK 統合漢字を入れて 2.14 MiB。グリフ数にそのまま比例する。
 
 ### 置き場所は Static Assets
 
@@ -77,12 +77,16 @@ PageRenderer が「Static Assets からフォントと画像を取る」と書�
 
 | | スクリプト (非圧縮) | gzip |
 | --- | --- | --- |
-| フォント同梱 | 17.14 MB | 5.87 MB |
-| Static Assets | 15.35 MB | 4.65 MB |
+| フォント同梱 | 17.14 MiB | 5.87 MiB |
+| Static Assets | 14.99 MiB | 4.65 MiB |
 
-代わりに cold start で読み込みが要る。`/health` を叩いて測ると、2.2 MB の
-日本語フォントが 9〜15 ms、Latin 2 本が 4〜17 ms。isolate ごとに 1 回だけなので
-合計 20〜35 ms。
+(wrangler が出すのは KiB なので 1024 進法。`15351.96 KiB / 1024 = 14.99`)
+
+代わりに cold start で読み込みが要る。`/health` を叩いて測ると、2.14 MiB の
+日本語フォントが 9〜15 ms、Latin 2 本が 4〜17 ms。合計 20〜35 ms。
+
+isolate ごとに 1 回のはずだが、**6 回連続で叩いたら 6 回とも boot が走った**
+(`fetchMs` が毎回違う)。トラフィックの無い Worker では isolate が再利用されない。
 
 ```json
 {"initMs":0,"fonts":[

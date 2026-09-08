@@ -1,0 +1,39 @@
+[package]
+name = "blitz-vibey-script"
+description = "JavaScript execution for Blitz using the Boa engine"
+version = "0.3.0-beta.2"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/dioxuslabs/blitz"
+repository = "https://github.com/dioxuslabs/blitz"
+edition = "2024"
+publish = false
+
+[features]
+default = []
+tracing = ["dep:tracing", "blitz-dom/tracing"]
+
+[dependencies]
+# Blitz は crates.io の 0.3.0-beta.2。本体 (kitesurf_clone) が使っているのと
+# 同じバージョン・同じソースを指す。ここがずれると BaseDocument の型が別物になる
+blitz-dom = { version = "=0.3.0-beta.2", default-features = false, features = ["autofocus"] }
+blitz-html = { version = "=0.3.0-beta.2", default-features = false }
+blitz-traits = { version = "=0.3.0-beta.2", default-features = false }
+
+# Boa (JavaScript engine)
+# `annex-b` は Annex B (web 互換) の ECMAScript 機能 (String.prototype.substr、
+# escape/unescape、script の中の HTML コメント) を有効にする。どのブラウザも
+# 実装していて、実ページはこれに依存している
+boa_engine = { version = "0.22", features = ["annex-b"] }
+boa_runtime = "0.22"
+boa_gc = "0.22"
+
+# Servo dependencies
+markup5ever = "0.39.0"
+
+# Other dependencies
+keyboard-types = "0.7"
+log = "0.4"
+url = "2.5.0"
+data-url = "0.3.1"
+web-time = "1"
+tracing = { version = "0.1.40", optional = true }

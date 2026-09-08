@@ -105,6 +105,16 @@ impl TableNetProvider {
         self.fetches.load(Ordering::Relaxed)
     }
 
+    /// 表から `<script src>` や ES module の中身を文字列で引く。
+    ///
+    /// 引けなかったら `None` を返し、その URL を取りこぼしに控える
+    /// (画像や CSS と同じ扱いなので、次のパスで JS 側が足してくれる)。
+    /// UTF-8 でないバイトは置換文字にする。落とすよりは残したほうがよい
+    pub(crate) fn text(&self, url: &str) -> Option<String> {
+        let bytes = self.lookup(url)?;
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
     /// 表から引けなかった URL。要求された順、重複なし
     pub fn misses(&self) -> Vec<String> {
         self.misses.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -512,7 +522,7 @@ mod tests {
             @font-face { font-family: probe; src: url(/f.ttf) format("truetype") }
             body { margin: 0 } p { margin: 0; font-size: 40px; font-family: probe }
             </style></head><body><p>Hello</p></body></html>"#;
-        let Ok(ttf) = std::fs::read("../fonts/sans-regular.ttf") else { return };
+        let Ok(ttf) = std::fs::read(&crate::font_file("sans-regular.ttf")) else { return };
 
         // フォントは 1 本も登録していないので、表から届かなければ 1 画素も塗られない
         let served = render_with(
@@ -580,9 +590,9 @@ mod tests {
 
         crate::clear_fonts();
         for (path, family) in [
-            ("../fonts/sans-regular.ttf", "sans"),
-            ("../fonts/sans-bold.ttf", "sans"),
-            ("../fonts/jp-regular.ttf", "jp"),
+            (&crate::font_file("sans-regular.ttf"), "sans"),
+            (&crate::font_file("sans-bold.ttf"), "sans"),
+            (&crate::font_file("jp-regular.ttf"), "jp"),
         ] {
             crate::add_font(std::fs::read(path).unwrap(), family);
         }

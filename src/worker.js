@@ -87,6 +87,10 @@ const usage = `browser-on-workers
   GET /shot?url=<URL>&js=0               ページの <script> を実行せずに描く
   GET /health                            Wasm が読めているかだけ確認する
 
+返す x-timing ヘッダの renderMs は、描画にかかった CPU 時間ではありません。
+Workers の Date.now() は I/O の無い区間で進まないので、描画のような純粋な計算は
+0 ms と出ます。実際の CPU 時間は wrangler tail の cpuTime で見てください。
+
 Chromium は使っていません。HTML のパース (html5ever)、CSS (Stylo)、
 レイアウト (Taffy)、描画 (blitz-paint) をすべて Worker の isolate の中で
 Wasm として動かしています。
@@ -195,27 +199,39 @@ export default {
       // 1 回描くと、エンジンが要求したのに表に無かった URL が missed_resources() に出る。
       // CSS の中の url() や @font-face は、その CSS が表に入って初めて読めるので、
       // @import が段になっていると 1 周では終わらない。空になるまで回す
+      //
+      // 時間の内訳について: Workers の `Date.now()` は I/O の無い区間で進まないので、
+      // 描画のような純粋な計算は 0 ms と出る。だから renderMs は「描画にかかった時間」
+      // ではなく「描画の前後で時計が進んだ量」でしかない。取りこぼしの回収 (fetch) を
+      // 同じ区間に入れると、その fetch の時間が描画時間に見えてしまうので分けて数える
+      timing.renderMs = 0;
+      timing.recoverFetchMs = 0;
       t = Date.now();
       let rgba = render(html, baseUrl, width, height);
+      timing.renderMs += Date.now() - t;
       timing.passes = 1;
       timing.recovered = [];
       for (let pass = 0; pass < MAX_PASSES; pass++) {
         const missed = missed_resources();
         if (!missed.length) break;
+        t = Date.now();
         const more = await fetchResources(missed, base, deny);
+        timing.recoverFetchMs += Date.now() - t;
         if (!more.got.length) break;
         for (const r of more.got) add_resource(r.url, r.bytes);
+        t = Date.now();
         rgba = render(html, baseUrl, width, height);
+        timing.renderMs += Date.now() - t;
         timing.passes++;
         timing.recovered.push({ asked: missed.length, got: more.got.length, bytes: more.bytes });
       }
-      timing.renderMs = Date.now() - t;
       // JS が途中で死んでいても絵は出る。何が起きたのかはヘッダで返す
       // (ヘッダの長さに限りがあるので、頭を少しだけ)
       if (runJs) {
         const errors = last_js_errors();
         timing.jsErrors = errors.length;
-        timing.jsError = errors.length ? errors[0].slice(0, 160) : null;
+        // 中身は日本語を含みうるのでヘッダには入れず、ログに流す
+        if (errors.length) console.warn('js errors:', errors.slice(0, 5));
       }
 
       t = Date.now();
@@ -227,6 +243,7 @@ export default {
           'content-type': 'image/png',
           'cache-control': 'no-store',
           // 各段にかかった時間を返す。どこが重いのかを外から見えるようにしておく
+          // 非 ASCII を入れると Workers が警告を出すので、値は数字と真偽値だけにする
           'x-timing': JSON.stringify(timing),
           'x-html-bytes': String(html.length),
         },

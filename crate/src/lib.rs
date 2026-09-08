@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use anyrender::{ImageRenderer, PaintScene};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
-use blitz_dom::{BaseDocument, DocumentConfig, FontContext, StyleThreading};
+use blitz_dom::{BaseDocument, Document, DocumentConfig, FontContext, StyleThreading};
 use blitz_traits::shell::{ColorScheme, Viewport};
 use kurbo::{Affine, Rect};
 use parley::fontique::{
@@ -22,6 +22,22 @@ use wasm_bindgen::prelude::*;
 /// 入口は `add_resource` / `clear_resources`
 pub mod net;
 use net::TableNetProvider;
+
+/// ページの `<script>` を Boa で実行する。入口は `set_js_enabled` / `last_js_errors`
+pub mod script;
+
+/// テストが読むフォントの場所。`scripts/build-fonts.mjs` の出力先は
+/// `public/fonts/` (Worker が Static Assets として配る場所) だが、
+/// 以前は `fonts/` だったので、両方を見る
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub fn font_file(name: &str) -> String {
+    let candidates = [format!("../public/fonts/{name}"), format!("../fonts/{name}")];
+    candidates
+        .iter()
+        .find(|path| std::path::Path::new(path).exists())
+        .cloned()
+        .unwrap_or_else(|| candidates[0].clone())
+}
 
 /// 直前の panic のメッセージ。panic hook が書き、`last_panic` で JS から取り出す
 static LAST_PANIC: Mutex<Option<String>> = Mutex::new(None);
@@ -315,10 +331,35 @@ fn family_covers(collection: &mut Collection, id: FamilyId, ch: char) -> bool {
 /// - 表に無かった URL は `missed_resources` に残る。JS はそれを取ってきて
 ///   `add_resource` で足し、もう 1 度これを呼ぶ (CSS の中から参照される画像は
 ///   この 2 パスでしか拾えない)
+/// - ページの `<script>` は Boa で実行する。`set_js_enabled(false)` で切れる。
+///   外部スクリプト (`<script src>`) も資源の表から引く (表に無ければ
+///   `missed_resources` に出るので、2 パス目で当たる)。
+///   拾われなかった例外は `last_js_errors` に出る
 #[wasm_bindgen]
 pub fn render_png_rgba(html: &str, base_url: &str, width: u32, height: u32) -> Vec<u8> {
+    render_maybe_js(html, base_url, width, height, script::js_enabled())
+}
+
+/// `render_png_rgba` と同じだが、ページの `<script>` を実行しない。
+///
+/// 実ページの崩れが JS のせいなのかを 1 回だけ切り分けたいときに使う
+/// (`set_js_enabled` と違って設定を残さない)
+#[wasm_bindgen]
+pub fn render_png_rgba_no_js(html: &str, base_url: &str, width: u32, height: u32) -> Vec<u8> {
+    render_maybe_js(html, base_url, width, height, false)
+}
+
+fn render_maybe_js(html: &str, base_url: &str, width: u32, height: u32, js: bool) -> Vec<u8> {
     let net = TableNetProvider::current();
-    let buf = render_with(html, base_url, current_font_ctx(), net.clone(), width, height);
+    let buf = render_with_opts(
+        html,
+        base_url,
+        current_font_ctx(),
+        net.clone(),
+        width,
+        height,
+        js,
+    );
     // 何を取りこぼしたかを JS から読めるところに置く。次の描画で置き換わる
     net::publish_misses(&net);
     buf
@@ -344,7 +385,7 @@ fn render_with_ctx(
     )
 }
 
-/// `render_png_rgba` の本体。`FontContext` とサブリソースの表を外から渡す
+/// `render_png_rgba` の本体 (JS 無し)。`FontContext` とサブリソースの表を外から渡す
 fn render_with(
     html: &str,
     base_url: &str,
@@ -353,33 +394,50 @@ fn render_with(
     width: u32,
     height: u32,
 ) -> Vec<u8> {
-    let mut doc: BaseDocument = blitz_html::HtmlDocument::from_html(
-        html,
-        DocumentConfig {
-            viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
-            base_url: Some(base_url_or_fallback(base_url)),
-            font_ctx: Some(font_ctx),
-            net_provider: Some(net.clone()),
-            // wasm32 には rayon のスレッドプールが無いので並列トラバースは使えない
-            style_threading: StyleThreading::Sequential,
-            ..Default::default()
-        },
-    )
-    .into();
+    render_with_opts(html, base_url, font_ctx, net, width, height, false)
+}
 
-    // 資源の取得は同期的に済んでいるが、応答は blitz-dom のメッセージ列に積まれるだけ。
-    // 取り込むのは次の `resolve` の頭なので、1 回では絵に入らない。
-    //
-    // しかも取得が始まる時点が資源によって違う。`<img src>` は DOM を組む途中、
-    // CSS の `background-image` はレイアウトの途中、`@font-face` は外部 CSS を
-    // 読み終えたあと。取得が増えなくなるまで resolve を回す (上限 4 週)
-    for _ in 0..4 {
-        let before = net.fetches();
-        doc.resolve(0.0);
-        if net.fetches() == before {
-            break;
-        }
-    }
+/// 描画の本体。`js` が真ならページの `<script>` を実行する。
+///
+/// JS を実行するときは `blitz-vibey-script` が `BaseDocument` を抱えてしまう
+/// (中の `Rc<RefCell<_>>` は取り出せない) ので、どちらの場合も blitz-dom の
+/// `Document` (= `BaseDocument` を貸してくれるもの) として扱う
+fn render_with_opts(
+    html: &str,
+    base_url: &str,
+    font_ctx: FontContext,
+    net: Arc<TableNetProvider>,
+    width: u32,
+    height: u32,
+    js: bool,
+) -> Vec<u8> {
+    let config = DocumentConfig {
+        viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
+        base_url: Some(base_url_or_fallback(base_url)),
+        font_ctx: Some(font_ctx),
+        net_provider: Some(net.clone()),
+        // wasm32 には rayon のスレッドプールが無いので並列トラバースは使えない
+        style_threading: StyleThreading::Sequential,
+        ..Default::default()
+    };
+
+    let mut page: Box<dyn Document> = if js {
+        // 実行の前に 1 度スタイルとレイアウトを付ける
+        // (`offsetWidth` のようにレイアウトを読むスクリプトのため)
+        let mut doc = script::prepare(html, config, net.clone());
+        settle(&mut doc, &net);
+        // ここで初めて JS が走る。DOM が変わる
+        script::run(&mut doc);
+        Box::new(doc)
+    } else {
+        Box::new(BaseDocument::from(blitz_html::HtmlDocument::from_html(
+            html, config,
+        )))
+    };
+
+    // JS の前に 1 度落ち着かせてあっても、JS が足したノードのために
+    // もう 1 度回す (JS 無しのときはこれが 1 度目)
+    settle(&mut *page, &net);
 
     let mut renderer = VelloCpuImageRenderer::new(width, height);
     let mut buf = Vec::new();
@@ -394,29 +452,48 @@ fn render_with(
                 None,
                 &Rect::new(0.0, 0.0, width as f64, height as f64),
             );
-            blitz_paint::paint_scene(scene, &mut doc, 1.0, width, height, 0, 0);
+            blitz_paint::paint_scene(scene, &mut page.inner_mut(), 1.0, width, height, 0, 0);
         },
         &mut buf,
     );
     buf
 }
 
+/// 取得が増えなくなるまで `resolve` を回す。
+///
+/// 資源の取得は同期的に済んでいるが、応答は blitz-dom のメッセージ列に積まれるだけ。
+/// 取り込むのは次の `resolve` の頭なので、1 回では絵に入らない。
+///
+/// しかも取得が始まる時点が資源によって違う。`<img src>` は DOM を組む途中、
+/// CSS の `background-image` はレイアウトの途中、`@font-face` は外部 CSS を
+/// 読み終えたあと。取得が増えなくなるまで回す (上限 4 週)
+fn settle(page: &mut dyn Document, net: &TableNetProvider) {
+    for _ in 0..4 {
+        let before = net.fetches();
+        page.inner_mut().resolve(0.0);
+        if net.fetches() == before {
+            break;
+        }
+    }
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 
-    /// リポジトリの fonts/ (crate からは 1 つ上)
-    const SANS: &str = "../fonts/sans-regular.ttf";
-    const SANS_BOLD: &str = "../fonts/sans-bold.ttf";
-    const JP: &str = "../fonts/jp-regular.ttf";
+    /// フォントのファイル名。場所は `font_file` が決める
+    const SANS: &str = "sans-regular.ttf";
+    const SANS_BOLD: &str = "sans-bold.ttf";
+    const JP: &str = "jp-regular.ttf";
 
-    /// (path, family) の列から FontContext を組む。グローバルの `FONTS` は触らない
+    /// (ファイル名, family) の列から FontContext を組む。グローバルの `FONTS` は触らない
     /// (cargo test はスレッド並列なので、テストどうしで共有すると順序に依存する)
     fn ctx(fonts: &[(&str, &str)]) -> FontContext {
         let fonts: Vec<(Blob<u8>, String)> = fonts
             .iter()
-            .map(|(path, family)| {
-                let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+            .map(|(name, family)| {
+                let path = font_file(name);
+                let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
                 (Blob::new(Arc::new(bytes)), family.to_string())
             })
             .collect();
@@ -560,9 +637,9 @@ mod tests {
     fn global_registry_roundtrip() {
         let _guard = net::GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
         clear_fonts();
-        assert_eq!(add_font(std::fs::read(SANS).unwrap(), "sans"), 1);
-        assert_eq!(add_font(std::fs::read(SANS_BOLD).unwrap(), "sans"), 1);
-        assert_eq!(add_font(std::fs::read(JP).unwrap(), "jp"), 1);
+        assert_eq!(add_font(std::fs::read(font_file(SANS)).unwrap(), "sans"), 1);
+        assert_eq!(add_font(std::fs::read(font_file(SANS_BOLD)).unwrap(), "sans"), 1);
+        assert_eq!(add_font(std::fs::read(font_file(JP)).unwrap(), "jp"), 1);
         // 読めないものは登録されず、family 名も残らない
         assert_eq!(add_font(b"not a font".to_vec(), "junk"), 0);
         assert_eq!(font_families(), vec!["sans", "jp"]);
@@ -582,9 +659,9 @@ mod fixture_tests {
             (Blob::new(Arc::new(std::fs::read(path).unwrap())), family.to_string())
         };
         build_font_ctx(&[
-            load("../fonts/sans-regular.ttf", "sans"),
-            load("../fonts/sans-bold.ttf", "sans"),
-            load("../fonts/jp-regular.ttf", "jp"),
+            load(&font_file("sans-regular.ttf"), "sans"),
+            load(&font_file("sans-bold.ttf"), "sans"),
+            load(&font_file("jp-regular.ttf"), "jp"),
         ])
         .0
     }
@@ -627,5 +704,243 @@ mod fixture_tests {
         if let Ok(dir) = std::env::var("RENDER_DUMP_DIR") {
             std::fs::write(format!("{dir}/fixture.rgba"), &buf).unwrap();
         }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod script_tests {
+    use super::*;
+
+    /// 受け入れテストの HTML。`<b>` は赤、`<i>` は緑。JS が動けば赤が緑に置き換わる
+    const ACCEPTANCE: &str = r#"<style>body{font:16px sans-serif;padding:20px}b{color:#c00}i{color:#080;font-style:normal}</style>
+<p id="a">JS は <b>動いていない</b></p>
+<p>2 + 2 = <span id="b">?</span></p>
+<script>
+  document.getElementById("a").innerHTML = 'JS は <i>動いた</i>';
+  document.getElementById("b").textContent = 2 + 2;
+</script>"#;
+
+    fn fonts() -> FontContext {
+        let load = |path: &str, family: &str| {
+            (
+                Blob::new(Arc::new(std::fs::read(path).unwrap())),
+                family.to_string(),
+            )
+        };
+        build_font_ctx(&[
+            load(&font_file("sans-regular.ttf"), "sans"),
+            load(&font_file("sans-bold.ttf"), "sans"),
+            load(&font_file("jp-regular.ttf"), "jp"),
+        ])
+        .0
+    }
+
+    fn render(html: &str, js: bool, w: u32, h: u32) -> Vec<u8> {
+        render_with_opts(
+            html,
+            "https://x.test/",
+            fonts(),
+            TableNetProvider::empty(),
+            w,
+            h,
+            js,
+        )
+    }
+
+    /// 条件に当たる画素の数。RGB は i32 で渡す (u8 のままだと足し算が回る)
+    fn count(buf: &[u8], pred: impl Fn(i32, i32, i32) -> bool) -> usize {
+        buf.chunks(4)
+            .filter(|p| pred(p[0] as i32, p[1] as i32, p[2] as i32))
+            .count()
+    }
+
+    /// 赤寄りの画素 (`#c00` の文字)
+    fn reddish(buf: &[u8]) -> usize {
+        count(buf, |r, g, b| r > 100 && r > g + 40 && r > b + 40)
+    }
+
+    /// 緑寄りの画素 (`#080` の文字)
+    fn greenish(buf: &[u8]) -> usize {
+        count(buf, |r, g, b| g > 60 && g > r + 30 && g > b + 30)
+    }
+
+    /// 受け入れテスト: JS を実行すると赤い「動いていない」が緑の「動いた」に変わり、
+    /// `?` が `4` になる
+    #[test]
+    fn javascript_mutates_the_dom() {
+        let _guard = net::GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
+        let (w, h) = (400u32, 120u32);
+
+        // JS を切ると赤い文字があって緑は無い
+        let off = render(ACCEPTANCE, false, w, h);
+        assert!(reddish(&off) > 30, "JS off should keep the red text: {}", reddish(&off));
+        assert!(greenish(&off) < 10, "JS off should have no green text: {}", greenish(&off));
+
+        // JS を入れると赤が消えて緑になる
+        let on = render(ACCEPTANCE, true, w, h);
+        assert!(greenish(&on) > 30, "JS on should paint the green text: {}", greenish(&on));
+        assert!(reddish(&on) < 10, "JS on should drop the red text: {}", reddish(&on));
+        assert!(script::last_js_errors().is_empty(), "{:?}", script::last_js_errors());
+
+        // 文字が増えている (`?` -> `4` は同じ幅なので、色で見た上のほうが確か)
+        if let Ok(dir) = std::env::var("RENDER_DUMP_DIR") {
+            std::fs::write(format!("{dir}/js_on_{w}x{h}.rgba"), &on).unwrap();
+            std::fs::write(format!("{dir}/js_off_{w}x{h}.rgba"), &off).unwrap();
+        }
+    }
+
+    /// `textContent` に数を入れると、その数が描かれる (`2 + 2` が JS として評価されている)
+    #[test]
+    fn text_content_from_arithmetic() {
+        let _guard = net::GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
+        let html = r#"<p style="margin:0;font-size:40px">= <span id="n"></span></p>
+            <script>document.getElementById("n").textContent = 2 + 2</script>"#;
+        let (w, h) = (200u32, 60u32);
+        let before = count(&render(html, false, w, h), |r, g, b| r < 200 && g < 200 && b < 200);
+        let after = count(&render(html, true, w, h), |r, g, b| r < 200 && g < 200 && b < 200);
+        assert!(after > before + 20, "the digit should be painted: {before} -> {after}");
+        assert!(script::last_js_errors().is_empty(), "{:?}", script::last_js_errors());
+    }
+
+    /// 無限ループを書かれても帰ってくる。ループより前に JS が触った DOM はそのまま描く
+    #[test]
+    fn runaway_loop_is_stopped() {
+        let _guard = net::GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
+        let html = r#"<p style="margin:0;font-size:40px;color:#080" id="a">x</p>
+            <script>
+              document.getElementById("a").textContent = "ok";
+              while (true) {}
+              document.getElementById("a").textContent = "never";
+            </script>"#;
+        let (w, h) = (200u32, 60u32);
+        let t = std::time::Instant::now();
+        let buf = render(html, true, w, h);
+        let elapsed = t.elapsed();
+        eprintln!("runaway loop: {elapsed:?}");
+        // ループの上限に当たった例外が残る
+        let errors = script::last_js_errors();
+        assert!(
+            errors.iter().any(|e| e.contains("RuntimeLimit") || e.contains("iteration")),
+            "expected a loop limit error, got {errors:?}"
+        );
+        // ループより前の代入は絵に入っている (緑の文字がある)
+        assert!(greenish(&buf) > 30, "the DOM before the loop should still paint");
+        // 実時間で妥当な範囲に収まっている (native の目安。手元では 1 秒未満)
+        assert!(elapsed.as_secs() < 20, "took too long: {elapsed:?}");
+    }
+
+    /// 深い再帰でも wasm のスタックを割る前に JS の例外になる
+    #[test]
+    fn deep_recursion_is_stopped() {
+        let _guard = net::GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
+        let html = r#"<p id="a">x</p><script>
+            function f(n) { return f(n + 1) }
+            document.getElementById("a").textContent = "before";
+            f(0);
+            </script>"#;
+        let buf = render(html, true, 100, 40);
+        assert_eq!(buf.len(), 100 * 40 * 4);
+        let errors = script::last_js_errors();
+        assert!(!errors.is_empty(), "expected a recursion limit error");
+    }
+
+    /// タイマーは仮想時間で回る。`setTimeout(f, 3000)` を実時間で待たない
+    #[test]
+    fn timers_run_in_virtual_time() {
+        let _guard = net::GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
+        let html = r#"<p style="margin:0;font-size:40px;color:#080" id="a"></p>
+            <script>setTimeout(function () {
+              document.getElementById("a").textContent = "late";
+            }, 300)</script>"#;
+        let t = std::time::Instant::now();
+        let buf = render(html, true, 200, 60);
+        assert!(t.elapsed().as_millis() < 3_000, "should not sleep: {:?}", t.elapsed());
+        assert!(greenish(&buf) > 30, "the timer callback should have run");
+    }
+
+    /// `setInterval` を張られても回数で切る (帰ってくる)
+    #[test]
+    fn endless_interval_is_bounded() {
+        let _guard = net::GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
+        let html = r#"<p id="a">x</p><script>
+            var n = 0;
+            setInterval(function () { n = n + 1; document.getElementById("a").textContent = String(n) }, 1);
+            </script>"#;
+        let t = std::time::Instant::now();
+        let buf = render(html, true, 100, 40);
+        eprintln!("endless interval: {:?}", t.elapsed());
+        assert_eq!(buf.len(), 100 * 40 * 4);
+        assert!(t.elapsed().as_secs() < 20, "took too long: {:?}", t.elapsed());
+    }
+
+    /// 外部スクリプトは資源の表から取る。表に無ければ取りこぼしに出る
+    #[test]
+    fn external_script_comes_from_the_table() {
+        let _guard = net::GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
+        let html = r#"<p style="margin:0;font-size:40px;color:#080" id="a"></p>
+            <script src="/app.js"></script>"#;
+
+        // 表に無いとき: 実行されず、URL が取りこぼしに残る
+        let net = TableNetProvider::empty();
+        let buf = render_with_opts(html, "https://x.test/", fonts(), net.clone(), 200, 60, true);
+        assert!(greenish(&buf) < 10, "nothing should have run");
+        assert_eq!(net.misses(), vec!["https://x.test/app.js"]);
+
+        // 表にあるとき: 実行される
+        net::clear_resources();
+        net::add_resource(
+            "https://x.test/app.js",
+            b"document.getElementById('a').textContent = 'from a file'".to_vec(),
+        );
+        let net = TableNetProvider::current();
+        let buf = render_with_opts(html, "https://x.test/", fonts(), net.clone(), 200, 60, true);
+        assert!(greenish(&buf) > 30, "the external script should have run");
+        assert!(net.misses().is_empty(), "{:?}", net.misses());
+        net::clear_resources();
+    }
+
+    /// 壊れた JS でも描画は続く
+    #[test]
+    fn broken_script_still_renders() {
+        let _guard = net::GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
+        for code in [
+            "this is not javascript ===",
+            "null.foo.bar",
+            "document.getElementById('nope').textContent = 'x'",
+            "throw new Error('boom')",
+            "window.location = 'https://elsewhere.test/'",
+            "document.write('<p>x</p>')",
+        ] {
+            let html = format!(r#"<p style="margin:0;font-size:40px;color:#080">keep</p><script>{code}</script>"#);
+            let buf = render(&html, true, 200, 60);
+            assert!(greenish(&buf) > 30, "should still paint the page for {code:?}");
+        }
+    }
+
+    /// `set_js_enabled(false)` と `render_png_rgba_no_js` で JS を切れる。
+    /// グローバル (フォントと資源の表) を触るのでここだけ直列
+    #[test]
+    fn js_can_be_switched_off() {
+        let _guard = net::GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
+        clear_fonts();
+        add_font(std::fs::read(&font_file("sans-regular.ttf")).unwrap(), "sans");
+        // 「動いた」は日本語なので JP フォントも要る
+        add_font(std::fs::read(&font_file("jp-regular.ttf")).unwrap(), "jp");
+        net::clear_resources();
+
+        assert!(script::js_enabled(), "JS is on by default");
+        let on = render_png_rgba(ACCEPTANCE, "", 400, 120);
+        assert!(greenish(&on) > 30, "JS should run through render_png_rgba");
+
+        let off = render_png_rgba_no_js(ACCEPTANCE, "", 400, 120);
+        assert!(reddish(&off) > 30, "render_png_rgba_no_js should skip scripts");
+
+        script::set_js_enabled(false);
+        assert!(!script::js_enabled());
+        let off = render_png_rgba(ACCEPTANCE, "", 400, 120);
+        assert!(reddish(&off) > 30, "set_js_enabled(false) should skip scripts");
+        script::set_js_enabled(true);
+
+        clear_fonts();
     }
 }

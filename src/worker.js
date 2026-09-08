@@ -37,6 +37,16 @@ import initWasm, {
 // Kitesurf も PageRenderer が Static Assets からフォントを取っている。
 // スクリプトサイズに含まれないので、フォントを増やしても上限に効かない
 
+/** 文字列を 32bit のハッシュにする (FNV-1a)。動的 Worker の id に使う */
+function hashText(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36);
+}
+
 // この Worker 自身のホスト。これ以外が来たら「動的 Worker からの中継の依頼」
 const OWN_HOSTS = new Set(['not-kitesurf.aiji42.dev', 'localhost', '127.0.0.1']);
 
@@ -520,17 +530,43 @@ export default {
         timing.fontMs = Date.now() - t;
 
         t = Date.now();
-        const { rgba, report } = await renderInBoaWorker(env, request, {
-          html, baseUrl, width: w, height: h, fonts, generics: GENERIC_LEAD,
-          // 白紙の原因を追うための口。document の中に書かせて絵に焼く
-          probe: url.searchParams.get('probe') ?? null,
-          id: url.searchParams.get('fresh') ? `boa:fresh:${Math.random()}` : `boa:${w}x${h}`,
+        // **id に中身を混ぜる。** 動的 Worker はモジュールとして HTML を抱えるので、
+        // 寸法だけを id にすると、別のページが同じ子 Worker を使い回して
+        // 最初のページを描いてしまう (実際に踏んだ)
+        const id = url.searchParams.get('fresh')
+          ? `boa:fresh:${Math.random()}`
+          : `boa:${w}x${h}:${hashText(baseUrl)}:${hashText(html)}`;
+        const probe = url.searchParams.get('probe') ?? null;
+        const runJs = url.searchParams.get('js') !== '0';
+        let { rgba, report } = await renderInBoaWorker(env, request, {
+          html, baseUrl, width: w, height: h, fonts, generics: GENERIC_LEAD, probe, id, runJs,
         });
         timing.pageScriptMs = Date.now() - t;
+
+        // ページの JS が DOM を壊して真っ白になることがある。
+        // 白いだけの絵を返すより、JS を切って描き直したほうが役に立つ
+        if (runJs && isBlank(rgba)) {
+          timing.blankWithJs = true;
+          t = Date.now();
+          const retry = await renderInBoaWorker(env, request, {
+            html, baseUrl, width: w, height: h, fonts, generics: GENERIC_LEAD,
+            probe, id, runJs: false,
+          });
+          timing.retryMs = Date.now() - t;
+          timing.usedNoJs = !isBlank(retry.rgba);
+          if (timing.usedNoJs) ({ rgba, report } = retry);
+        }
 
         t = Date.now();
         const png = await encodePNG(rgba, w, h);
         timing.encodeMs = Date.now() - t;
+
+        // 表示に使う数を、経路に依らない形で出す。
+        // 構成 A は CSS と画像を区別しない (engine が要求したものを取るだけ) ので、
+        // /shot の css.fetched / img.fetched とは別の形にしてある
+        timing.passes = (report?.passes?.length ?? 0) + 1;
+        timing.resources = report?.fetched ?? 0;
+        timing.jsErrors = report?.jsErrors?.length ?? 0;
 
         return new Response(png, {
           headers: {

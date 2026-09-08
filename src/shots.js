@@ -1,6 +1,6 @@
 // scripts/build-shots.mjs が生成する。手で編集しない
 export default {
-  "capturedAt": "2026-09-08T13:08:40.854Z",
+  "capturedAt": "2026-09-08T13:39:50.757Z",
   "shots": [
     {
       "slug": "ja-wikipedia-org",
@@ -13,52 +13,30 @@ export default {
         "chromium": {
           "file": "/shots/ja-wikipedia-org.chromium.png",
           "kb": 202,
-          "ms": 2700,
-          "billedMs": 1263,
+          "ms": 2437,
+          "billedMs": 1454,
           "timing": null
         },
         "kitesurf": {
           "file": "/shots/ja-wikipedia-org.kitesurf.png",
           "kb": 390,
-          "ms": 17286,
-          "billedMs": 15331,
+          "ms": 9021,
+          "billedMs": 8090,
           "timing": null
         },
         "mine": {
           "file": "/shots/ja-wikipedia-org.mine.png",
-          "kb": 359,
-          "ms": 7783,
+          "kb": 366,
+          "ms": 5434,
           "billedMs": null,
           "timing": {
-            "js": true,
-            "fetchMs": 460,
-            "polyfill": true,
-            "subresourceMs": 2047,
-            "css": {
-              "fetched": 3,
-              "skipped": 0,
-              "bytes": 230947
-            },
-            "img": {
-              "fetched": 24,
-              "skipped": 0,
-              "tooBig": 0,
-              "bytes": 162714,
-              "decodedBytes": 1299560
-            },
-            "renderMs": 0,
-            "recoverFetchMs": 2533,
-            "passes": 2,
-            "recovered": [
-              {
-                "asked": 15,
-                "got": 15,
-                "bytes": 120504,
-                "tooBig": 0
-              }
-            ],
-            "jsErrors": 1,
-            "encodeMs": 0
+            "fetchMs": 634,
+            "fontMs": 31,
+            "pageScriptMs": 4245,
+            "encodeMs": 0,
+            "passes": 3,
+            "resources": 42,
+            "jsErrors": 1
           }
         }
       }
@@ -73,51 +51,31 @@ export default {
       "engines": {
         "chromium": {
           "file": "/shots/developer-mozilla-org.chromium.png",
-          "kb": 54,
-          "ms": 1516,
-          "billedMs": 1166,
+          "kb": 60,
+          "ms": 1069,
+          "billedMs": 790,
           "timing": null
         },
         "kitesurf": {
           "file": "/shots/developer-mozilla-org.kitesurf.png",
-          "kb": 66,
-          "ms": 7195,
-          "billedMs": 6219,
+          "kb": 68,
+          "ms": 9840,
+          "billedMs": 8882,
           "timing": null
         },
         "mine": {
           "file": "/shots/developer-mozilla-org.mine.png",
           "kb": 57,
-          "ms": 2539,
+          "ms": 4144,
           "billedMs": null,
           "timing": {
-            "js": true,
-            "fetchMs": 428,
-            "polyfill": true,
-            "subresourceMs": 50,
-            "css": {
-              "fetched": 18,
-              "skipped": 0,
-              "bytes": 84345
-            },
-            "img": {
-              "fetched": 0,
-              "skipped": 0,
-              "bytes": 0
-            },
-            "renderMs": 0,
-            "recoverFetchMs": 108,
-            "passes": 2,
-            "recovered": [
-              {
-                "asked": 32,
-                "got": 32,
-                "bytes": 966614,
-                "tooBig": 0
-              }
-            ],
-            "jsErrors": 0,
-            "encodeMs": 0
+            "fetchMs": 518,
+            "fontMs": 67,
+            "pageScriptMs": 3448,
+            "encodeMs": 0,
+            "passes": 3,
+            "resources": 50,
+            "jsErrors": 0
           }
         }
       }
@@ -133,52 +91,30 @@ export default {
         "chromium": {
           "file": "/shots/react-dev.chromium.png",
           "kb": 153,
-          "ms": 1330,
-          "billedMs": 908,
+          "ms": 1707,
+          "billedMs": 1166,
           "timing": null
         },
         "kitesurf": {
           "file": "/shots/react-dev.kitesurf.png",
           "kb": 84,
-          "ms": 5171,
-          "billedMs": 4716,
+          "ms": 3985,
+          "billedMs": 3575,
           "timing": null
         },
         "mine": {
           "file": "/shots/react-dev.mine.png",
-          "kb": 88,
-          "ms": 11753,
+          "kb": 74,
+          "ms": 8780,
           "billedMs": null,
           "timing": {
-            "js": true,
-            "fetchMs": 58,
-            "polyfill": true,
-            "subresourceMs": 286,
-            "css": {
-              "fetched": 1,
-              "skipped": 0,
-              "bytes": 108608
-            },
-            "img": {
-              "fetched": 24,
-              "skipped": 0,
-              "tooBig": 0,
-              "bytes": 61671,
-              "decodedBytes": 1133824
-            },
-            "renderMs": 0,
-            "recoverFetchMs": 1960,
-            "passes": 2,
-            "recovered": [
-              {
-                "asked": 66,
-                "got": 66,
-                "bytes": 3128316,
-                "tooBig": 0
-              }
-            ],
-            "jsErrors": 0,
-            "encodeMs": 0
+            "fetchMs": 47,
+            "fontMs": 37,
+            "pageScriptMs": 8311,
+            "encodeMs": 0,
+            "passes": 3,
+            "resources": 91,
+            "jsErrors": 0
           }
         }
       }
@@ -194,50 +130,30 @@ export default {
         "chromium": {
           "file": "/shots/todomvc-com.chromium.png",
           "kb": 22,
-          "ms": 1397,
-          "billedMs": 1115,
+          "ms": 1627,
+          "billedMs": 1091,
           "timing": null
         },
         "kitesurf": {
           "file": "/shots/todomvc-com.kitesurf.png",
           "kb": 91,
-          "ms": 2681,
-          "billedMs": 2328,
+          "ms": 2704,
+          "billedMs": 2348,
           "timing": null
         },
         "mine": {
           "file": "/shots/todomvc-com.mine.png",
           "kb": 20,
-          "ms": 4458,
+          "ms": 2830,
           "billedMs": null,
           "timing": {
-            "js": true,
-            "fetchMs": 251,
-            "polyfill": true,
-            "subresourceMs": 219,
-            "css": {
-              "fetched": 1,
-              "skipped": 0,
-              "bytes": 7400
-            },
-            "img": {
-              "fetched": 0,
-              "skipped": 0,
-              "bytes": 0
-            },
-            "renderMs": 0,
-            "recoverFetchMs": 158,
+            "fetchMs": 346,
+            "fontMs": 32,
+            "pageScriptMs": 2111,
+            "encodeMs": 0,
             "passes": 2,
-            "recovered": [
-              {
-                "asked": 2,
-                "got": 2,
-                "bytes": 240666,
-                "tooBig": 0
-              }
-            ],
-            "jsErrors": 1,
-            "encodeMs": 0
+            "resources": 3,
+            "jsErrors": 1
           }
         }
       }

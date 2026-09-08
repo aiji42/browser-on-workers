@@ -260,13 +260,29 @@ export const DEMO_SHOTS = [
   ],
 ];
 
+/**
+ * x-timing から 1 行の説明を作る。
+ *
+ * 構成 A (`/ashot`) は「資源 N 本 · M 周」、旧来の `/shot` は
+ * 「CSS n 枚 · 画像 m 枚」を出す。どちらの形でも読めるようにしておく
+ */
+function engineNote(t) {
+  const bits = [];
+  if (t.resources != null) bits.push(`資源 ${t.resources} 本`);
+  else if (t.css) bits.push(`CSS ${t.css.fetched} 枚`, `画像 ${t.img?.fetched ?? 0} 枚`);
+  if (t.passes) bits.push(`${t.passes} 周`);
+  if (t.usedNoJs) bits.push('JS を切って描き直した');
+  else if (t.jsErrors) bits.push(`JS のエラー ${t.jsErrors} 件`);
+  return bits.join(' · ');
+}
+
 /** デモのトップページ。origin は自分の URL (自己参照の画像に使う) */
 export function demoHtml(origin) {
   // 3 つのブラウザで同時刻に撮った 1 組。scripts/build-shots.mjs が作る
   const ENGINES = [
     ['chromium', 'Chromium', '本物のブラウザ。Browser Run の既定'],
     ['kitesurf', 'Kitesurf', 'Cloudflare 版。Chromium を使わない'],
-    ['mine', '疑似 Kitesurf', '公開情報だけを見て組んだもの (browser-on-workers)'],
+    ['mine', '疑似 Kitesurf', '公開情報だけを見て組んだもの。動的 Worker の handler で Boa を動かし、解釈の途中で資源を取りに行く'],
   ];
 
   const pane = (shot, [key, label, about]) => {
@@ -275,7 +291,7 @@ export function demoHtml(origin) {
     const t = e.timing ?? null;
     const num = e.billedMs != null
       ? `課金 ${e.billedMs} ms`
-      : (t ? `${t.passes} パス · CSS ${t.css.fetched} 枚 · 画像 ${t.img.fetched} 枚` : '');
+      : (t ? engineNote(t) : '');
     return `<figure class="shot ${key}">
   <div class="bar"><span class="dot"></span>${label}<span class="sp">${e.kb} KB</span></div>
   <div class="body"><a href="${e.file}"><img src="${e.file}" width="${shot.w}" height="${shot.h}"
@@ -408,7 +424,7 @@ try {
     var h = document.getElementById('h').value || 800;
     go.disabled = true;
     out.innerHTML = '<p class="msg">' + url + ' を描いています…</p>';
-    var src = '/shot?w=' + w + '&h=' + h + '&url=' + encodeURIComponent(url) + '&cb=' + Date.now();
+    var src = '/ashot?w=' + w + '&h=' + h + '&url=' + encodeURIComponent(url) + '&cb=' + Date.now();
     var t0 = Date.now();
     fetch(src).then(function (res) {
       var ms = Date.now() - t0;
@@ -423,9 +439,10 @@ try {
       return res.blob().then(function (blob) {
         var img = URL.createObjectURL(blob);
         var meta = [
-          'CSS ' + ((timing.css || {}).fetched || 0) + ' 枚',
-          '画像 ' + ((timing.img || {}).fetched || 0) + ' 枚',
-          (timing.passes || 1) + ' パス',
+          timing.resources != null
+            ? '資源 ' + timing.resources + ' 本'
+            : 'CSS ' + ((timing.css || {}).fetched || 0) + ' 枚',
+          (timing.passes || 1) + ' 周',
           Math.round(ms / 100) / 10 + ' 秒',
         ];
         if (timing.usedNoJs) meta.push('JS を切って描き直した');

@@ -40,7 +40,7 @@ const MAX_PASSES = 6;
 const MAX_PER_PASS = 48;
 
 /** 動的 Worker の中身 (handler で走る部分) を組む */
-function entryModule({ baseUrl, width, height, fonts, generics, timerLimit, probe }) {
+function entryModule({ baseUrl, width, height, fonts, generics, timerLimit, probe, runJs }) {
   return `
 import * as glue from './glue.js';
 import wasm from './engine.wasm';
@@ -55,6 +55,7 @@ ${generics.map(([g, fams]) => `glue.set_generic_lead(${JSON.stringify(g)}, ${JSO
 
 const BASE = ${JSON.stringify(baseUrl)};
 const PROBE = ${JSON.stringify(probe ?? null)};
+const RUN_JS = ${runJs === false ? 'false' : 'true'};
 const W = ${width};
 const H = ${height};
 
@@ -100,21 +101,21 @@ export default {
       passes: [], fetched: 0, failed: 0, bytes: 0, errors: [],
       scripts: null, timers: null, jsErrors: [],
     };
-    const doc = glue.sess_open(html, BASE, W, H, true);
+    const doc = glue.sess_open(html, BASE, W, H, RUN_JS);
     if (!doc) throw new Error('sess_open が 0 を返した: ' + (glue.last_panic() ?? '?'));
 
     // 1. HTML から要求された資源 (CSS、画像) を解く
     await settleLoop(doc, report, 'html');
 
     // 2. 外部スクリプトの中身が揃ったので、ここで初めて JS を走らせる
-    report.scripts = glue.sess_run_scripts(doc);
+    report.scripts = RUN_JS ? glue.sess_run_scripts(doc) : false;
     glue.sess_settle(doc);
 
     // 3. JS が足したノードが要求する資源を解く
     await settleLoop(doc, report, 'js');
 
     // 4. タイマーを流す。React はここで進む
-    report.timers = glue.sess_run_timers(doc, ${timerLimit});
+    report.timers = RUN_JS ? glue.sess_run_timers(doc, ${timerLimit}) : 0;
     await settleLoop(doc, report, 'timer');
     glue.sess_settle(doc);
 
@@ -158,11 +159,14 @@ export async function renderInBoaWorker(env, request, page) {
     'glue.js': await (await env.ASSETS.fetch(new URL('/glue.js', request.url))).text(),
     'engine.wasm': { wasm: (await import('../crate/pkg/kitesurf_clone_bg.wasm')).default },
     'page.html': { text: html },
-    'entry.js': entryModule({ baseUrl, width, height, fonts, generics, timerLimit, probe: page.probe }),
+    'entry.js': entryModule({
+      baseUrl, width, height, fonts, generics, timerLimit,
+      probe: page.probe, runJs: page.runJs,
+    }),
   };
   fonts.forEach((f, i) => { modules[`font${i}.ttf`] = { data: f.bytes.buffer ?? f.bytes }; });
 
-  const stub = env.LOADER.get(page.id ?? `boa:${Math.random()}`, async () => ({
+  const stub = env.LOADER.get(`${page.id ?? `boa:${Math.random()}`}${page.runJs === false ? ':nojs' : ''}`, async () => ({
     compatibilityDate: COMPAT,
     mainModule: 'entry.js',
     modules,

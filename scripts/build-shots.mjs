@@ -66,9 +66,11 @@ async function browserRun(browser, url, width, height) {
 
 /** 自作の Worker で 1 枚撮る */
 async function mine(url, width, height) {
-  const q = new URLSearchParams({ demo: '1', w: String(width), h: String(height), url });
+  // 構成 A (動的 Worker の handler で Boa、解釈の途中で資源を取りに行く)。
+  // 公開している顔をこれに揃えてある
+  const q = new URLSearchParams({ w: String(width), h: String(height), url });
   const t0 = Date.now();
-  const res = await fetch(`${WORKER}/shot?${q}`, { signal: AbortSignal.timeout(180000) });
+  const res = await fetch(`${WORKER}/ashot?${q}`, { signal: AbortSignal.timeout(180000) });
   const buf = Buffer.from(await res.arrayBuffer());
   if (!res.ok) throw new Error(`mine が失敗した (${res.status}): ${buf.toString('utf8').slice(0, 300)}`);
   let timing = null;
@@ -97,7 +99,10 @@ for (const [url, w, h, title, note] of DEMO_SHOTS) {
     engines[name] = { file, kb: Math.round(r.buf.length / 1024), ms: r.ms, billedMs: r.billedMs ?? null, timing: r.timing ?? null };
     console.log(`  ${name.padEnd(9)} ${(r.buf.length / 1024).toFixed(0).padStart(5)} KB  ${r.ms} ms`
       + (r.billedMs != null ? `  課金 ${r.billedMs} ms` : '')
-      + (r.timing ? `  ${r.timing.passes} パス / CSS ${r.timing.css.fetched} / 画像 ${r.timing.img.fetched}` : ''));
+      + (r.timing
+        ? `  ${r.timing.passes ?? '?'} 周 / 資源 ${r.timing.resources ?? r.timing.css?.fetched ?? '?'}`
+          + (r.timing.usedNoJs ? ' / JS を切って描き直した' : '')
+        : ''));
   }
   out.shots.push({ slug, url, w, h, title, note, engines });
 }

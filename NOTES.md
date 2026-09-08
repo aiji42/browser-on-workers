@@ -410,6 +410,97 @@ V8 を使うには資源を先に全部揃える必要があり、それには�
 JS 側からは成功と区別が付かない。回避は `sess_open` より前に
 `add_resource` で渡しておくことだけ。
 
+## React のハイドレーションを止めていたのは、DOM の 5 つの穴
+
+長く「Boa だから React のハイドレーションが通らない」と書いていた。**違った。**
+
+### 追い方
+
+ハイドレーションの不一致は **例外ではなく `console.error`** で来る
+(`onRecoverableError` の既定がそれ)。だから JS のエラー一覧にも絵にも出ない。
+`POLYFILL` で `console.error` / `console.warn` を控えるようにして、
+`sess_eval` で document の中に書かせ、そのまま絵に焼いて読んだ。
+
+react.dev が吐いていたもの。
+
+```
+Minified React error #418  (ハイドレーション失敗)
+TypeError: not a callable function @ at o (:1:10971) < at n (:1:12078)
+                                    < at <main> (:1:11508) < at forEach (native)
+```
+
+列番号から `main-*.js` (Next.js) の該当箇所を引いた。
+
+| 列 | コード |
+| --- | --- |
+| 11508 | `["meta","base","link","style","script"].forEach(e=>{n(e,t[e]||[])})` |
+| 12078 | `r.setAttribute("data-next-head","")` … `for(let e of n) if(o(e,r))` |
+| 10971 | `return e.isEqualNode(n)` |
+
+同じやり方で、React 18 の **development ビルド**に最小のハイドレーションを
+させると、こう言ってくれる。
+
+```
+TypeError: cannot convert 'null' or 'undefined' to object
+  at diffHydratedProperties < hydrateInstance
+  < prepareToHydrateHostInstance < completeWork
+Error: Hydration failed because the initial UI does not match what was
+rendered on the server.
+```
+
+`diffHydratedProperties` は要素の属性を列挙する。**`element.attributes` が
+`undefined`** だった。
+
+### 塞いだもの
+
+| 穴 | それが無いと何が起きるか |
+| --- | --- |
+| **`element.attributes`** | React が属性を列挙できず落ちる。React は不一致と判断して SSR の HTML を捨てる |
+| `select.options` | React DOM の `<select>` 初期化が `node.options` を for で回す |
+| `document.location` | Next.js のルータが `document.location.hostname` を読む |
+| `document.title` への代入 | 読み取り専用だった。Next.js は head の更新で毎回代入する |
+| `isEqualNode` | Next.js の head 管理が `<meta>` / `<link>` を突き合わせる |
+
+`attributes` は engine 側に列挙の口が無いので、**`outerHTML` の開きタグを
+手で走査して組んだ。** 正規表現は使えない (下記)。
+
+ついでに、両経路の DOM を総当たりで比べて欠けていたものを揃えた。
+`getAttributeNS` / `setAttributeNS` / `dispatchEvent` / `click` /
+`createEvent` / `compareDocumentPosition` / `hasChildNodes` /
+`getClientRects` / `normalize` / `setSelectionRange` / `isSameNode` /
+`getRootNode` / `remove` / `replaceWith` / `window.getComputedStyle` /
+`window.scrollTo`。
+
+### 結果
+
+| | 前 | 後 |
+| --- | --- | --- |
+| react.dev を `/ashot` (Boa、動的 Worker) | 白紙 4981 B | **75761 B** |
+| react.dev を `/shot` (Boa、本体) | JS を切って描き直し | **保険なしで 90864 B** |
+
+React 18 の development ビルドで最小のハイドレーションを通すと
+`reuse=SAME` (サーバのノードをそのまま使い回した) まで行く。
+
+### `POLYFILL` は template literal なので、バックスラッシュが潰れる
+
+`src/polyfill.js` の `POLYFILL` はバッククォートで囲んだ文字列。
+中に `'\n'` と書くと、**文字列になる前に本物の改行になって構文が壊れる。**
+`/^\s+/` は `/^s+/` になる。壊れても Worker は動き続け、
+**POLYFILL が丸ごと無効になるだけ**なので気付きにくい。
+
+対策を 2 つ入れた。
+
+1. エスケープを使わない書き方にする (`String.fromCharCode(10)`、`.trim()`)
+2. 変更のたびに `new Function(POLYFILL)` を通して構文を確かめる
+
+```bash
+node --input-type=module -e "
+import {POLYFILL} from './src/polyfill.js';
+new Function(POLYFILL);
+console.log('OK', POLYFILL.length);
+"
+```
+
 ## Boa の RuntimeLimitError は、ページの try/catch では捕まらない
 
 暴走を止めるために `RECURSION_LIMIT = 160` を置いている。超えると

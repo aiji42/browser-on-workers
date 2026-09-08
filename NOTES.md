@@ -528,6 +528,44 @@ RuntimeLimitError: reached the maximum number of recursive calls on this executi
 例外なので、React が自分で捕まえてクライアント描画にやり直す形になりうる) と
 `SCRIPT_BUDGET` (1.5 秒、スクリプトの切れ目でしか見ない)。
 
+## react.dev のロゴが大きく出るのは、CSS ではなく SVG の描画側
+
+ページの JS を走らせるようにしたら、react.dev のヒーローのロゴが
+Chromium より大きく出るようになった。順に潰した結果、**CSS は無罪**だった。
+
+疑って外したもの。
+
+| 疑い | 実測 |
+| --- | --- |
+| `uwu` のイースターエッグが入った | `documentElement` のクラスは `platform-min` で `uwu` は無い |
+| `URLSearchParams.get` が `''` を返して `case '':` に当たる | `null` を返している (`?uwu` の判定は通っていない) |
+| CSS に `@import` があって後から届いて捨てられた | react.dev の CSS は 1 枚 108 KB で `@import` は 0 |
+| `.uwu-visible{display:none}` が `.flex{display:flex}` に負けている | `getComputedStyle` で `display=none`。カスケードは正しい |
+| `lg:` のメディアクエリが幅 1000 で効いてしまう | 幅 1200 で `mm1024=true`、レイアウトは `lg:w-28` = 112px を返す |
+
+つまり **レイアウトは 112x100 を出している**のに、絵の上では 200px ほどで
+描かれている。`blitz-paint` 側が SVG をレイアウトの箱に収めていない。
+CSS でもカスケードでもメディアクエリでもなく、描画の問題として残っている。
+
+副産物: 「プラットフォームのアイコンが本文に重なる」ほうは、公開している顔を
+構成 A に替えた時点で消えた。
+
+## 子 Worker の id には中身を混ぜる
+
+`/ashot` の id を `boa:${w}x${h}` にしていたら、**寸法が同じ別のページが
+同じ子 Worker を使い回して、最初のページを描いた。** Dynamic Worker は
+モジュールとして HTML を抱えるので、id が同じなら中身も同じものが返る。
+
+react.dev を撮ったら MDN の絵が出てきて気付いた。PNG の大きさが
+MDN と 1 バイト差だったのが手がかり。
+
+```js
+const id = `boa:${w}x${h}:${hashText(baseUrl)}:${hashText(html)}`;
+```
+
+構成 B (`src/pagescript.js`) は最初から中身でハッシュを作っていたので、
+こちらだけの取りこぼしだった。
+
 ## SandboxOutbound は、専用の entrypoint にしないと再帰する
 
 `globalOutbound` に Fetcher を渡すと、**子 Worker の `fetch` が全部そこへ届く。**

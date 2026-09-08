@@ -996,6 +996,7 @@ dependencies = [
  "blitz-html",
  "blitz-paint",
  "blitz-traits",
+ "data-url",
  "kurbo",
  "parley",
  "peniko",

@@ -10,12 +10,14 @@
 // Chromium は使わない。ブラウザの処理は全部この isolate の中で終わる。
 
 import { encodePNG } from './png.js';
-import { fetchHtml, inlineStylesheets } from './outbound.js';
+import { fetchHtml, inlineStylesheets, fetchImages } from './outbound.js';
 
 // Rust 側。wasm-bindgen の glue と、その中身の Wasm。
 // wrangler.jsonc の rules で .wasm は CompiledWasm として読み込まれる
 import wasmModule from '../crate/pkg/kitesurf_clone_bg.wasm';
-import initWasm, { add_font, render_png_rgba, last_panic } from '../crate/pkg/kitesurf_clone.js';
+import initWasm, {
+  add_font, add_resource, clear_resources, render_png_rgba, last_panic,
+} from '../crate/pkg/kitesurf_clone.js';
 
 // Workers にはシステムフォントが 1 つも無いので、字を出すには持ち込むしかない。
 // woff2 は Brotli で圧縮されていて Workers 側でほどけないので TrueType のまま置く。
@@ -121,6 +123,15 @@ export default {
       html = sheets.html;
       timing.cssMs = Date.now() - t;
       timing.css = { fetched: sheets.fetched, skipped: sheets.skipped, bytes: sheets.cssBytes };
+
+      // 画像は Worker が取ってきて表に入れる。Rust 側は通信しない。
+      // isolate はリクエストをまたいで生きるので、前のページの分を先に捨てる
+      t = Date.now();
+      clear_resources();
+      const imgs = await fetchImages(html, baseUrl || 'https://inline.invalid/');
+      for (const img of imgs.images) add_resource(img.url, img.bytes);
+      timing.imgMs = Date.now() - t;
+      timing.img = { fetched: imgs.images.length, skipped: imgs.skipped, bytes: imgs.bytes };
 
       t = Date.now();
       // base URL を渡す。blitz-dom は <link href="/x.css"> のような相対参照を

@@ -18,6 +18,11 @@ use parley::fontique::{
 use peniko::{Color, Fill};
 use wasm_bindgen::prelude::*;
 
+/// サブリソース (画像・外部 CSS・web font) を JS が渡した表から返す `NetProvider`。
+/// 入口は `add_resource` / `clear_resources`
+pub mod net;
+use net::TableNetProvider;
+
 /// 直前の panic のメッセージ。panic hook が書き、`last_panic` で JS から取り出す
 static LAST_PANIC: Mutex<Option<String>> = Mutex::new(None);
 
@@ -304,18 +309,47 @@ fn family_covers(collection: &mut Collection, id: FamilyId, ch: char) -> bool {
 /// - フォントは先に `add_font` で登録しておく。CSS の font-family が何を指していても、
 ///   登録したフォントの中から文字を持つものに落ちる。何も登録していないと文字は描かれない
 /// - vello_cpu の描画面は u16 なので、辺の長さは 65535 まで
-/// - サブリソース (画像・外部 CSS・web font) は取得しない。インライン `<style>` と
-///   `style` 属性だけが効く
+/// - サブリソース (画像・外部 CSS・web font) は**先に `add_resource` で渡した表からだけ**
+///   届く。Rust 側から通信はしない。表に無いものは無かったものとして描く
+///   (画像はその場所が空き、CSS は当たらない)
 #[wasm_bindgen]
 pub fn render_png_rgba(html: &str, base_url: &str, width: u32, height: u32) -> Vec<u8> {
-    render_with_ctx(html, base_url, current_font_ctx(), width, height)
+    render_with(
+        html,
+        base_url,
+        current_font_ctx(),
+        TableNetProvider::current(),
+        width,
+        height,
+    )
 }
 
-/// `render_png_rgba` の本体。`FontContext` を外から渡す (テストはグローバルを触らずにこれを使う)
+/// `FontContext` を外から渡す (フォントまわりのテストはグローバルを触らずにこれを使う)。
+/// サブリソースの表は空
+#[cfg_attr(not(test), allow(dead_code))]
 fn render_with_ctx(
     html: &str,
     base_url: &str,
     font_ctx: FontContext,
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
+    render_with(
+        html,
+        base_url,
+        font_ctx,
+        TableNetProvider::empty(),
+        width,
+        height,
+    )
+}
+
+/// `render_png_rgba` の本体。`FontContext` とサブリソースの表を外から渡す
+fn render_with(
+    html: &str,
+    base_url: &str,
+    font_ctx: FontContext,
+    net: Arc<TableNetProvider>,
     width: u32,
     height: u32,
 ) -> Vec<u8> {
@@ -325,13 +359,27 @@ fn render_with_ctx(
             viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
             base_url: Some(base_url_or_fallback(base_url)),
             font_ctx: Some(font_ctx),
+            net_provider: Some(net.clone()),
             // wasm32 には rayon のスレッドプールが無いので並列トラバースは使えない
             style_threading: StyleThreading::Sequential,
             ..Default::default()
         },
     )
     .into();
-    doc.resolve(0.0);
+
+    // 資源の取得は同期的に済んでいるが、応答は blitz-dom のメッセージ列に積まれるだけ。
+    // 取り込むのは次の `resolve` の頭なので、1 回では絵に入らない。
+    //
+    // しかも取得が始まる時点が資源によって違う。`<img src>` は DOM を組む途中、
+    // CSS の `background-image` はレイアウトの途中、`@font-face` は外部 CSS を
+    // 読み終えたあと。取得が増えなくなるまで resolve を回す (上限 4 週)
+    for _ in 0..4 {
+        let before = net.fetches();
+        doc.resolve(0.0);
+        if net.fetches() == before {
+            break;
+        }
+    }
 
     let mut renderer = VelloCpuImageRenderer::new(width, height);
     let mut buf = Vec::new();

@@ -28,6 +28,8 @@ peniko = "0.6"
 wasm-bindgen = "0.2"
 # base_url の検証 (blitz-dom が使っているのと同じクレート)
 url = "2"
+# `<img src="data:...">` を JS を通さずに解く。usvg が既に引いているので wasm は増えない
+data-url = "0.3"
 
 [profile.release]
 opt-level = "s"

@@ -26,10 +26,54 @@ export function add_font(bytes, family) {
 }
 
 /**
+ * サブリソースを 1 つ登録する。`render_png_rgba` より先に、資源ごとに 1 回呼ぶ。
+ *
+ * - `url` は**絶対 URL**。HTML の中の `src` / `href` を `new URL(href, baseUrl)` で
+ *   解決したものを渡す。相対 URL を渡しても、Blitz が組む URL とは一致しない
+ * - `bytes` は取得した中身をそのまま。画像は PNG / JPEG / GIF / WebP / SVG、
+ *   CSS と web font もこの表から返る
+ * - 戻り値は実際に鍵にした文字列。JS 側で URL の正規化がずれていないかの確認に使える
+ * - 同じ URL を 2 度渡すと後のほうが残る
+ *
+ * `data:` URL は表に入れなくてよい。Rust 側で解く
+ * @param {string} url
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ */
+export function add_resource(url, bytes) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(bytes, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.add_resource(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred3_0 = r0;
+        deferred3_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export3(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * 登録したフォントを全部消す
  */
 export function clear_fonts() {
     wasm.clear_fonts();
+}
+
+/**
+ * 登録した資源を全部捨てる。ページごとに呼ぶ
+ * (Workers の isolate はリクエストをまたいで生きるので、呼ばないと前のページの画像が残る)
+ */
+export function clear_resources() {
+    wasm.clear_resources();
 }
 
 /**
@@ -111,8 +155,9 @@ export function last_panic() {
  * - フォントは先に `add_font` で登録しておく。CSS の font-family が何を指していても、
  *   登録したフォントの中から文字を持つものに落ちる。何も登録していないと文字は描かれない
  * - vello_cpu の描画面は u16 なので、辺の長さは 65535 まで
- * - サブリソース (画像・外部 CSS・web font) は取得しない。インライン `<style>` と
- *   `style` 属性だけが効く
+ * - サブリソース (画像・外部 CSS・web font) は**先に `add_resource` で渡した表からだけ**
+ *   届く。Rust 側から通信はしない。表に無いものは無かったものとして描く
+ *   (画像はその場所が空き、CSS は当たらない)
  * @param {string} html
  * @param {string} base_url
  * @param {number} width
@@ -132,6 +177,24 @@ export function render_png_rgba(html, base_url, width, height) {
         var v3 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export3(r0, r1 * 1, 1);
         return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * 登録済みの URL (確認用。順序は決まらない)
+ * @returns {string[]}
+ */
+export function resource_urls() {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.resource_urls(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayJsValueFromWasm0(r0, r1);
+        wasm.__wbindgen_export3(r0, r1 * 4, 4);
+        return v1;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }

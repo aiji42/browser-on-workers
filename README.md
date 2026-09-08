@@ -49,6 +49,17 @@ Rust 側は wasm32-unknown-unknown 向けにビルドして wasm-bindgen で JS 
 
 ![ja.wikipedia.org](docs/ja-wikipedia-images.png)
 
+ページの JavaScript も動く。緑の枠はページの `<script>` が書き換えたもの。
+最後の枠だけは `while (true)` が実行上限に当たって書き換わらず、
+**それより前に書いた 5 つは残る**。
+
+![JavaScript が動く](docs/js-runs.png)
+
+MDN の `Array.prototype.map()`。`map()` や `Array` が等幅で出ている
+(generic family の順序を `monospace` だけ変えている)。
+
+![MDN](docs/mdn-monospace.png)
+
 外部 CSS と画像は Worker が取ってきて engine に渡している。Blitz 自身は
 サブリソースを取りに行かないので、ネットワークは Worker 側の 1 箇所に閉じている
 (Kitesurf が SandboxOutbound に閉じ込めているのと同じ形)。

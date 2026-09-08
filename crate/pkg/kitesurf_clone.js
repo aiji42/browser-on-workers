@@ -70,7 +70,8 @@ export function clear_fonts() {
 
 /**
  * 登録した資源を全部捨てる。ページごとに呼ぶ
- * (Workers の isolate はリクエストをまたいで生きるので、呼ばないと前のページの画像が残る)
+ * (Workers の isolate はリクエストをまたいで生きるので、呼ばないと前のページの画像が残る)。
+ * `missed_resources` の記録も一緒に捨てる
  */
 export function clear_resources() {
     wasm.clear_resources();
@@ -143,6 +144,33 @@ export function last_panic() {
 }
 
 /**
+ * **直前の `render_png_rgba` が要求したのに表に無かった** URL。
+ *
+ * これを fetch して `add_resource` で足し、もう 1 度描くと、CSS の中から
+ * 参照される画像 (`background-image`) や `@import` した CSS、`@font-face` の
+ * web font まで絵に入る。HTML を走査するだけでは集まらないもの。
+ *
+ * - `fetch` にそのまま渡せる絶対 URL (http / https)。要求された順、重複なし
+ * - `data:` は Rust 側で解くので入らない
+ * - 描画のたびに置き換わる。空になったら足すものは無い
+ * - `render_png_rgba` を通らない描画 (native のテスト) では更新されない
+ * @returns {string[]}
+ */
+export function missed_resources() {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.missed_resources(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayJsValueFromWasm0(r0, r1);
+        wasm.__wbindgen_export3(r0, r1 * 4, 4);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * HTML を `width` x `height` のビューポートに描き、RGBA8 のピクセル列を返す。
  *
  * - 戻り値は `width * height * 4` バイト。左上から行優先、1 ピクセル = R, G, B, A
@@ -158,6 +186,9 @@ export function last_panic() {
  * - サブリソース (画像・外部 CSS・web font) は**先に `add_resource` で渡した表からだけ**
  *   届く。Rust 側から通信はしない。表に無いものは無かったものとして描く
  *   (画像はその場所が空き、CSS は当たらない)
+ * - 表に無かった URL は `missed_resources` に残る。JS はそれを取ってきて
+ *   `add_resource` で足し、もう 1 度これを呼ぶ (CSS の中から参照される画像は
+ *   この 2 パスでしか拾えない)
  * @param {string} html
  * @param {string} base_url
  * @param {number} width

@@ -312,16 +312,16 @@ fn family_covers(collection: &mut Collection, id: FamilyId, ch: char) -> bool {
 /// - サブリソース (画像・外部 CSS・web font) は**先に `add_resource` で渡した表からだけ**
 ///   届く。Rust 側から通信はしない。表に無いものは無かったものとして描く
 ///   (画像はその場所が空き、CSS は当たらない)
+/// - 表に無かった URL は `missed_resources` に残る。JS はそれを取ってきて
+///   `add_resource` で足し、もう 1 度これを呼ぶ (CSS の中から参照される画像は
+///   この 2 パスでしか拾えない)
 #[wasm_bindgen]
 pub fn render_png_rgba(html: &str, base_url: &str, width: u32, height: u32) -> Vec<u8> {
-    render_with(
-        html,
-        base_url,
-        current_font_ctx(),
-        TableNetProvider::current(),
-        width,
-        height,
-    )
+    let net = TableNetProvider::current();
+    let buf = render_with(html, base_url, current_font_ctx(), net.clone(), width, height);
+    // 何を取りこぼしたかを JS から読めるところに置く。次の描画で置き換わる
+    net::publish_misses(&net);
+    buf
 }
 
 /// `FontContext` を外から渡す (フォントまわりのテストはグローバルを触らずにこれを使う)。
@@ -554,9 +554,11 @@ mod tests {
     }
 
     /// wasm-bindgen 向けの入口 (グローバル登録) も一通り動く。
-    /// グローバルを触るのはこのテストだけにする
+    /// フォントのグローバルを触るのはこのテストだけ。`render_png_rgba` は
+    /// 資源の表と `missed_resources` も触るので、`net` 側のテストと直列にする
     #[test]
     fn global_registry_roundtrip() {
+        let _guard = net::GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
         clear_fonts();
         assert_eq!(add_font(std::fs::read(SANS).unwrap(), "sans"), 1);
         assert_eq!(add_font(std::fs::read(SANS_BOLD).unwrap(), "sans"), 1);

@@ -10,13 +10,14 @@
 // Chromium は使わない。ブラウザの処理は全部この isolate の中で終わる。
 
 import { encodePNG } from './png.js';
-import { fetchHtml, fetchStylesheets, fetchImages } from './outbound.js';
+import { demoHtml, cardHtml } from './demo.js';
+import { fetchHtml, fetchStylesheets, fetchImages, fetchResources } from './outbound.js';
 
 // Rust 側。wasm-bindgen の glue と、その中身の Wasm。
 // wrangler.jsonc の rules で .wasm は CompiledWasm として読み込まれる
 import wasmModule from '../crate/pkg/kitesurf_clone_bg.wasm';
 import initWasm, {
-  add_font, add_resource, clear_resources, render_png_rgba, last_panic,
+  add_font, add_resource, clear_resources, missed_resources, render_png_rgba, last_panic,
 } from '../crate/pkg/kitesurf_clone.js';
 
 // Workers にはシステムフォントが 1 つも無いので、字を出すには持ち込むしかない。
@@ -56,6 +57,9 @@ const describeError = (e) => {
   };
 };
 
+// 取りこぼしを回収して描き直す回数の上限。@import が段になっていると 2 周では終わらない
+const MAX_PASSES = 3;
+
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 800;
 
@@ -74,7 +78,34 @@ export default {
   async fetch(request) {
     const url = new URL(request.url);
 
-    if (url.pathname === '/' ) {
+    const html5 = (body) => new Response(body, {
+      headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
+    });
+
+    // デモ。このブラウザで自分自身を描けるように、JS を 1 行も使っていない
+    if (url.pathname === '/') return html5(demoHtml(url.origin));
+    // X などに貼る見せ札。外部資源を持たないので単体で描ける
+    if (url.pathname === '/card') return html5(cardHtml());
+
+    // 自分の HTML を、fetch を挟まずにそのまま描く。
+    // Worker は自分自身の workers.dev の URL を fetch できない (404 になる) ので、
+    // 自己紹介の絵を出すにはこの経路が必要
+    if (url.pathname === '/card.png' || url.pathname === '/self.png') {
+      const body = url.pathname === '/card.png' ? cardHtml() : demoHtml(url.origin);
+      const w = url.pathname === '/card.png' ? 1200 : 1000;
+      const h = url.pathname === '/card.png' ? 630 : 900;
+      try {
+        await ensureWasm();
+        clear_resources();
+        const rgba = render_png_rgba(body, `${url.origin}/`, w, h);
+        return new Response(await encodePNG(rgba, w, h), {
+          headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=300' },
+        });
+      } catch (e) {
+        return Response.json({ ok: false, error: describeError(e) }, { status: 500 });
+      }
+    }
+    if (url.pathname === '/usage') {
       return new Response(usage, { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     }
 
@@ -124,10 +155,13 @@ export default {
       clear_resources();
       const base = baseUrl || 'https://inline.invalid/';
 
+      // 自分の /shot を資源として取りに行くと再帰するので弾く
+      const deny = (u) => u.startsWith(`${url.origin}/shot`);
+
       t = Date.now();
       const [sheets, imgs] = await Promise.all([
-        fetchStylesheets(html, base),
-        fetchImages(html, base),
+        fetchStylesheets(html, base, deny),
+        fetchImages(html, base, deny),
       ]);
       for (const sheet of sheets.sheets) add_resource(sheet.url, sheet.bytes);
       for (const img of imgs.images) add_resource(img.url, img.bytes);
@@ -135,10 +169,26 @@ export default {
       timing.css = { fetched: sheets.sheets.length, skipped: sheets.skipped, bytes: sheets.bytes };
       timing.img = { fetched: imgs.images.length, skipped: imgs.skipped, bytes: imgs.bytes };
 
-      t = Date.now();
       // base URL を渡す。blitz-dom は <link href="/x.css"> のような相対参照を
       // これに対して解決する。無いと (base になれない data: URL が既定なので) panic する
-      const rgba = render_png_rgba(html, baseUrl, width, height);
+      //
+      // 1 回描くと、エンジンが要求したのに表に無かった URL が missed_resources() に出る。
+      // CSS の中の url() や @font-face は、その CSS が表に入って初めて読めるので、
+      // @import が段になっていると 1 周では終わらない。空になるまで回す
+      t = Date.now();
+      let rgba = render_png_rgba(html, baseUrl, width, height);
+      timing.passes = 1;
+      timing.recovered = [];
+      for (let pass = 0; pass < MAX_PASSES; pass++) {
+        const missed = missed_resources();
+        if (!missed.length) break;
+        const more = await fetchResources(missed, base, deny);
+        if (!more.got.length) break;
+        for (const r of more.got) add_resource(r.url, r.bytes);
+        rgba = render_png_rgba(html, baseUrl, width, height);
+        timing.passes++;
+        timing.recovered.push({ asked: missed.length, got: more.got.length, bytes: more.bytes });
+      }
       timing.renderMs = Date.now() - t;
 
       t = Date.now();

@@ -311,10 +311,7 @@ mod tests {
             .iter()
             .map(|(url, bytes)| (normalize(url), Bytes::from(bytes.clone())))
             .collect();
-        Arc::new(TableNetProvider {
-            table: Arc::new(table),
-            fetches: AtomicUsize::new(0),
-        })
+        TableNetProvider::with_table(table)
     }
 
     fn px(buf: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
@@ -563,11 +560,6 @@ mod tests {
         }
     }
 
-    /// グローバル (フォントと資源の表) を触るテストの直列化。
-    /// `lib.rs` 側の `global_registry_roundtrip` と同じプロセスなので、
-    /// `PAGE_DIR` を渡して実ページのテストを走らせるときは `--test-threads=1` が安全
-    static GLOBAL: Mutex<()> = Mutex::new(());
-
     /// 実ページを、画像を渡して JS と同じ経路 (`add_resource` + `render_png_rgba`) で描く。
     ///
     /// ```sh
@@ -620,6 +612,148 @@ mod tests {
         crate::clear_fonts();
     }
 
+    /// CSS の中から参照される画像は、表に無ければ記録に残る。
+    ///
+    /// これが 2 パス描画の入口。`background-image` の URL は HTML の `<img src>` を
+    /// 走査しても出てこないので、「要求されたのに無かった」を数えるしかない
+    #[test]
+    fn css_image_miss_is_recorded() {
+        let html = r#"<body style="margin:0"><div style="width:40px;height:40px;
+            background-image:url(/bg.png);background-size:cover"></div></body>"#;
+        let provider = TableNetProvider::empty();
+        render_with(html, "https://x.test/", no_fonts(), provider.clone(), 40, 40);
+        assert_eq!(provider.misses(), vec!["https://x.test/bg.png"]);
+    }
+
+    /// 記録は表と同じ鍵 (fragment を落としたもの) なので、SVG sprite の
+    /// `#a` `#b` は 1 本にまとまる。`data:` は Rust 側で解けるので入らない
+    #[test]
+    fn misses_are_deduped_and_exclude_data_urls() {
+        let html = format!(
+            r#"<body style="margin:0">
+            <img src="/i.svg#a" width="8" height="8">
+            <img src="/i.svg#b" width="8" height="8">
+            <img src="data:image/png;base64,{RED_PNG}" width="8" height="8">
+            </body>"#
+        );
+        let provider = TableNetProvider::empty();
+        render_with(&html, "https://x.test/", no_fonts(), provider.clone(), 40, 40);
+        assert_eq!(provider.misses(), vec!["https://x.test/i.svg"]);
+    }
+
+    /// 2 パス: 外部 CSS が参照する画像を、1 回目の記録から足して 2 回目で描く。
+    ///
+    /// 1 回目に stylesheet を表から返しておくのは、`fetch` の中から `@import` や
+    /// `@font-face` のためにもう一度 `fetch` が呼ばれる経路を通すため (記録の lock を
+    /// handler の呼び出しまで持っていると、ここで固まる)
+    #[test]
+    fn two_passes_fill_in_a_css_image() {
+        let (w, h) = (40u32, 40u32);
+        let html = r#"<html><head><link rel="stylesheet" href="/s.css"></head>
+            <body><div class="hero"></div></body></html>"#;
+        let css = r#"@import "/more.css";
+            body { margin: 0 }
+            .hero { width: 40px; height: 40px;
+                    background-image: url(/bg.png); background-size: cover }"#;
+        let sheet = || ("https://x.test/s.css", Vec::from(css));
+
+        // 1 回目: CSS だけを渡して描く。bg.png がどこから参照されているかは
+        // カスケードが終わるまで分からないので、ここでは白のまま
+        let first = net(&[sheet()]);
+        let buf = render_with(html, "https://x.test/", no_fonts(), first.clone(), w, h);
+        assert_eq!(px(&buf, w, 20, 20), WHITE, "1 回目は画像が無いので白");
+        let missed = first.misses();
+        assert!(
+            missed.contains(&"https://x.test/bg.png".to_string()),
+            "CSS から参照される画像が記録に出ること: {missed:?}"
+        );
+        // @import した先も同じ記録に出る (JS はこれも取ってきて足せる)
+        assert!(missed.contains(&"https://x.test/more.css".to_string()), "{missed:?}");
+        eprintln!("1 回目の取りこぼし: {missed:?}");
+
+        // 2 回目: 記録に出た URL を「取得して」表に足し、もう 1 度描く。
+        // Document は描画ごとに作り直すので、同じ URL がもう一度要求される
+        let mut entries = vec![sheet()];
+        for url in &missed {
+            if url.ends_with(".png") {
+                entries.push((url.as_str(), b64(BLUE_PNG)));
+            } else {
+                entries.push((url.as_str(), Vec::new()));
+            }
+        }
+        let second = net(&entries);
+        let buf = render_with(html, "https://x.test/", no_fonts(), second.clone(), w, h);
+        assert_eq!(px(&buf, w, 20, 20), BLUE, "2 回目は CSS の画像が塗られる");
+        assert_eq!(second.misses(), Vec::<String>::new(), "足したら取りこぼしは無くなる");
+    }
+
+    /// 表に足すと、次の回に**新しい取りこぼしが出てくる**ことがある。
+    ///
+    /// CSS の中の URL は、その CSS が表に入って初めて読める。`@import` が
+    /// 何段か続くページでは 2 パスでは足りないので、JS 側は
+    /// `missed_resources()` が空になるまで (または上限まで) 回すのがよい
+    #[test]
+    fn resources_inside_css_need_another_round() {
+        let (w, h) = (40u32, 40u32);
+        let html = r#"<html><head><link rel="stylesheet" href="/s.css"></head>
+            <body><div class="hero"></div></body></html>"#;
+        let outer = ("https://x.test/s.css", Vec::from(r#"@import "/more.css";"#));
+        let inner = (
+            "https://x.test/more.css",
+            Vec::from(
+                r#"body { margin: 0 }
+                .hero { width: 40px; height: 40px;
+                        background-image: url(/deep.png); background-size: cover }"#,
+            ),
+        );
+
+        // 1 回目: s.css だけ。deep.png はまだ誰も知らない
+        let first = net(&[outer.clone()]);
+        render_with(html, "https://x.test/", no_fonts(), first.clone(), w, h);
+        assert_eq!(first.misses(), vec!["https://x.test/more.css"]);
+
+        // 2 回目: @import 先が読めたので、その中の画像が記録に出る
+        let second = net(&[outer.clone(), inner.clone()]);
+        let buf = render_with(html, "https://x.test/", no_fonts(), second.clone(), w, h);
+        assert_eq!(px(&buf, w, 20, 20), WHITE);
+        assert_eq!(second.misses(), vec!["https://x.test/deep.png"]);
+
+        // 3 回目: 全部そろって描ける
+        let third = net(&[outer, inner, ("https://x.test/deep.png", b64(BLUE_PNG))]);
+        let buf = render_with(html, "https://x.test/", no_fonts(), third.clone(), w, h);
+        assert_eq!(px(&buf, w, 20, 20), BLUE);
+        assert_eq!(third.misses(), Vec::<String>::new());
+    }
+
+    /// JS が通る経路 (`add_resource` / `missed_resources` / `render_png_rgba`) で
+    /// 2 パスが回る。フォントは登録しないので、見るのは画像の色だけ
+    #[test]
+    fn missed_resources_drives_the_second_pass() {
+        let _guard = GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
+        let (w, h) = (40u32, 40u32);
+        let html = r#"<html><head><style>body { margin: 0 }
+            .hero { width: 40px; height: 40px;
+                    background-image: url(/bg.png); background-size: cover }
+            </style></head><body><div class="hero"></div></body></html>"#;
+
+        clear_resources();
+        assert!(missed_resources().is_empty());
+
+        let buf = crate::render_png_rgba(html, "https://x.test/", w, h);
+        assert_eq!(px(&buf, w, 20, 20), WHITE);
+        assert_eq!(missed_resources(), vec!["https://x.test/bg.png"]);
+
+        for url in missed_resources() {
+            add_resource(&url, b64(RED_PNG));
+        }
+        let buf = crate::render_png_rgba(html, "https://x.test/", w, h);
+        assert_eq!(px(&buf, w, 20, 20), RED, "2 回目で画像が出ること");
+        assert!(missed_resources().is_empty(), "残りは無い");
+
+        clear_resources();
+        assert!(missed_resources().is_empty(), "clear_resources で記録も消える");
+    }
+
     /// wasm-bindgen 向けの入口 (グローバルの表) も一通り動く
     #[test]
     fn global_table_roundtrip() {
@@ -634,6 +768,8 @@ mod tests {
         assert!(provider.lookup("https://x.test/").is_some());
         assert!(provider.lookup("https://y.test/").is_none());
         assert_eq!(provider.fetches(), 0);
+        // 引けなかったぶんだけが記録に残る
+        assert_eq!(provider.misses(), vec!["https://y.test/"]);
 
         // 描画の途中で表を差し替えても、その描画は始めに写した表で最後まで進む
         clear_resources();

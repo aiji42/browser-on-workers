@@ -2,9 +2,12 @@
 // Kitesurf が SandboxOutbound という 1 コンポーネントにネットワークを閉じ込めて
 // いるのと同じ考え方。呼び出し側からは「URL を渡すと描ける HTML が返る」だけに見える。
 //
-// Rust 側 (Blitz) はサブリソースを取りに行かないので、外部 CSS は Worker が取ってきて
-// インラインの <style> として本文に差し込む。これをやらないと、実ページはどれも
+// Rust 側 (Blitz) はサブリソースを取りに行かないので、Worker が取ってきて
+// 「URL -> バイト列」の表に入れる。これをやらないと、実ページはどれも
 // スタイルの当たっていない素の文書として描かれてしまう。
+//
+// deny を渡すと、その URL は取りに行かない。自分の /shot を指す <img> を
+// 描こうとして再帰するのを防ぐために使う。
 
 const BROWSER_HEADERS = {
   accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -72,8 +75,10 @@ function findStylesheetHrefs(html) {
  * `../img/x.png` のような参照がずれる。
  * 表に入れて Blitz に `<link>` から要求させれば、基準は正しくなる。
  */
-export async function fetchStylesheets(html, baseUrl) {
-  const hrefs = findStylesheetHrefs(html).slice(0, MAX_STYLESHEETS);
+export async function fetchStylesheets(html, baseUrl, deny = () => false) {
+  const hrefs = findStylesheetHrefs(html).filter((h) => {
+    try { return !deny(new URL(h, baseUrl).toString()); } catch { return true; }
+  }).slice(0, MAX_STYLESHEETS);
   if (!hrefs.length) return { sheets: [], skipped: 0, bytes: 0 };
 
   const got = await Promise.all(hrefs.map(async (href) => {
@@ -146,8 +151,8 @@ function findImageUrls(html, baseUrl) {
  * ページの画像を取ってきて、URL とバイト列の組で返す。
  * 取れなかったものは黙って飛ばす。
  */
-export async function fetchImages(html, baseUrl) {
-  const urls = findImageUrls(html, baseUrl);
+export async function fetchImages(html, baseUrl, deny = () => false) {
+  const urls = findImageUrls(html, baseUrl).filter((u) => !deny(u));
   if (!urls.length) return { images: [], skipped: 0, bytes: 0 };
 
   const got = await Promise.all(urls.map(async (url) => {
@@ -179,4 +184,49 @@ export async function fetchImages(html, baseUrl) {
     images.push(g);
   }
   return { images, skipped, bytes };
+}
+
+
+// ── 取りこぼしの回収 ─────────────────────────────────────────────
+//
+// エンジンが要求したのに表に無かった URL を、まとめて取ってくる。
+// CSS の中の url() や @font-face は、その CSS を表に入れて初めて読めるので、
+// 「描く → 取りこぼしを取る → 描き直す」を何周か回すことになる。
+
+const MAX_MISS_BYTES = 8 * 1024 * 1024;
+const MISS_TIMEOUT_MS = 5000;
+
+/** 任意の URL をまとめて取得する。種類 (CSS / 画像 / フォント) は問わない */
+export async function fetchResources(urls, baseUrl, deny = () => false) {
+  const targets = urls
+    .filter((u) => /^https?:/.test(u))
+    .filter((u) => !u.startsWith('https://inline.invalid/')) // base が無いときの見せかけの URL
+    .filter((u) => !deny(u))
+    .slice(0, 64);
+  if (!targets.length) return { got: [], skipped: 0, bytes: 0 };
+
+  const results = await Promise.all(targets.map(async (url) => {
+    try {
+      const res = await fetch(url, {
+        headers: { ...BROWSER_HEADERS, accept: '*/*', referer: baseUrl },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(MISS_TIMEOUT_MS),
+      });
+      if (!res.ok) return null;
+      return { url, bytes: new Uint8Array(await res.arrayBuffer()) };
+    } catch {
+      return null;
+    }
+  }));
+
+  const got = [];
+  let bytes = 0;
+  let skipped = 0;
+  for (const r of results) {
+    if (!r) { skipped++; continue; }
+    if (bytes + r.bytes.length > MAX_MISS_BYTES) { skipped++; continue; }
+    bytes += r.bytes.length;
+    got.push(r);
+  }
+  return { got, skipped, bytes };
 }

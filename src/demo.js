@@ -259,9 +259,9 @@ export const DEMO_SHOTS = [
 export function demoHtml(origin) {
   // 3 つのブラウザで同時刻に撮った 1 組。scripts/build-shots.mjs が作る
   const ENGINES = [
-    ['chromium', 'Chromium', '本物のブラウザ (Browser Run の既定)'],
+    ['chromium', 'Chromium', '本物のブラウザ。Browser Run の既定'],
     ['kitesurf', 'Kitesurf', 'Cloudflare 版。Chromium を使わない'],
-    ['mine', 'これ', '公開情報だけで組んだもの'],
+    ['mine', 'browser-on-workers', 'この記事で組んだもの。公開情報だけを見て作った'],
   ];
 
   const pane = (shot, [key, label, about]) => {
@@ -303,7 +303,7 @@ export function demoHtml(origin) {
 </header>
 
 <h2>3 つのブラウザで同じページを撮る</h2>
-<p>左が本物のブラウザ (Chromium)、中央が Cloudflare の Kitesurf、右がこれです。3 枚は<b>同じ時刻に撮っています</b> — ja.wikipedia のトップページは日ごとに変わるので、別々に撮るとエンジンの違いとページの違いが混ざります。画像を押すと元の大きさで開きます。</p>
+<p>左が本物のブラウザ (Chromium)、中央が Cloudflare の Kitesurf、<b>右がこのページを配信しているブラウザ</b>です。3 枚は<b>同じ時刻に撮っています</b> — ja.wikipedia のトップページは日ごとに変わるので、別々に撮るとエンジンの違いとページの違いが混ざります。画像を押すと元の大きさで開きます。</p>
 <p class="hint">撮影 ${new Date(SHOTS.capturedAt).toISOString().replace('T', ' ').slice(0, 16)} UTC。下の「自分で試す」だけはその場で描きます。</p>
 
 ${SHOTS.shots.map(trio).join('\n')}

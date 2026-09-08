@@ -1,0 +1,18 @@
+[package]
+name = "kitesurf_clone"
+version = "0.1.0"
+edition = "2021"
+
+# Worker から呼ぶので cdylib。wasm-bindgen で JS の glue を作る
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Kitesurf が名前を挙げているものをそのまま使う。
+# blitz-dom は Stylo (CSS) と Taffy (レイアウト) を引き込む
+blitz-dom = "0.3.0-beta.2"
+blitz-html = "0.3.0-beta.2"
+
+[profile.release]
+opt-level = "s"
+lto = true

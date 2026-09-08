@@ -1,0 +1,21 @@
+{
+  "name": "browser-on-workers",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "URL を渡すとスクリーンショットが返る、Cloudflare Workers の上だけで動く小さなブラウザ",
+  "license": "MIT",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "fonts": "node scripts/build-fonts.mjs",
+    "dev": "wrangler dev",
+    "deploy": "npm run fonts && wrangler deploy",
+    "shot": "node test/shot.mjs"
+  },
+  "devDependencies": {
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/noto-sans-jp": "^5.3.0",
+    "subset-font": "^2.7.0",
+    "wrangler": "^4.128.0"
+  }
+}

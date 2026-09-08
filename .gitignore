@@ -1,0 +1,5 @@
+node_modules/
+crate/target/
+.wrangler/
+*.png
+!docs/*.png

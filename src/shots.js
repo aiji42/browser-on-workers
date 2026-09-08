@@ -1,4 +1,5 @@
-{
+// scripts/build-shots.mjs が生成する。手で編集しない
+export default {
   "capturedAt": "2026-09-08T07:09:12.800Z",
   "shots": [
     {
@@ -182,4 +183,4 @@
       }
     }
   ]
-}
+};

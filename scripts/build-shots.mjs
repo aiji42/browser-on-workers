@@ -102,5 +102,11 @@ for (const [url, w, h, title, note] of DEMO_SHOTS) {
   out.shots.push({ slug, url, w, h, title, note, engines });
 }
 
-writeFileSync(new URL('../src/shots.json', import.meta.url), JSON.stringify(out, null, 2) + '\n');
+// JSON ではなく JS のモジュールとして書く。Node は JSON の import に
+// `with { type: 'json' }` を要求するので、ビルド用のスクリプトから読めなくなる
+writeFileSync(
+  new URL('../src/shots.js', import.meta.url),
+  '// scripts/build-shots.mjs が生成する。手で編集しない\n'
+  + `export default ${JSON.stringify(out, null, 2)};\n`,
+);
 console.log(`\n${out.shots.length} ページ × 3 枚を public/shots/ に置いた (撮影 ${out.capturedAt})`);

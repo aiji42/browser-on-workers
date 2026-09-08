@@ -4,6 +4,8 @@
 // HTML を直接エンジンに渡す経路を使う)。ページの JavaScript も Boa で実行するので、
 // Chrome で見たときと、このブラウザで描いたときの絵が一致する。
 
+import SHOTS from './shots.js';
+
 const CSS = `
 :root{
   --ink:#111; --muted:#666; --line:#e5e5e5; --paper:#fafafa;
@@ -30,6 +32,7 @@ h2{
   border-top:1px solid var(--line); padding-top:22px;
 }
 h2 + p{margin-top:10px}
+h3{margin:34px 0 4px; font-size:16px; letter-spacing:-.01em}
 p{margin:0 0 14px}
 code{
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.88em;
@@ -55,6 +58,25 @@ a{color:var(--accent)}
   border-top:1px solid var(--line); padding:9px 12px; font-size:12.5px; color:var(--muted);
 }
 .shot figcaption b{color:var(--ink); font-weight:600}
+
+/* 3 つのブラウザを横に並べる。wrap (940px) より広く取りたいので、
+   50% 寄せてから半分だけ戻す */
+.trio{
+  width:min(1560px, calc(100vw - 32px));
+  margin:0 0 30px 50%; transform:translateX(-50%);
+  display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px;
+}
+.trio > .shot{margin:0; min-width:0}
+.trio .bar .dot{background:#9a9a9a}
+.trio .shot.kitesurf .bar .dot{background:#f38020}
+.trio .shot.mine .bar .dot{background:#33d17a}
+.trio .body{padding:8px}
+.trio figcaption{font-size:12px; padding:8px 10px}
+.trio .num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; color:var(--muted)}
+.shotmeta{margin:0 0 8px; font-size:12.5px; color:var(--muted)}
+@media (max-width: 820px){
+  .trio{grid-template-columns:minmax(0, 1fr)}
+}
 
 /* 左右に並べて見比べる。iframe は 760x560 のまま描かせて、
    右の PNG と同じ縮尺になるように transform で縮める */
@@ -235,14 +257,31 @@ export const DEMO_SHOTS = [
 
 /** デモのトップページ。origin は自分の URL (自己参照の画像に使う) */
 export function demoHtml(origin) {
-  const shotUrl = (url, w, h) =>
-    `${origin}/shot?demo=1&w=${w}&h=${h}&url=${encodeURIComponent(url)}`;
+  // 3 つのブラウザで同時刻に撮った 1 組。scripts/build-shots.mjs が作る
+  const ENGINES = [
+    ['chromium', 'Chromium', '本物のブラウザ (Browser Run の既定)'],
+    ['kitesurf', 'Kitesurf', 'Cloudflare 版。Chromium を使わない'],
+    ['mine', 'これ', '公開情報だけで組んだもの'],
+  ];
 
-  const shot = ([url, w, h, title, note]) => `<figure class="shot">
-  <div class="bar"><span class="dot"></span>この画像は <b>Chromium を使わずに</b>描いています<span class="sp">${w}×${h}</span></div>
-  <div class="body"><img src="${shotUrl(url, w, h)}" width="${w}" height="${h}" alt="${title} を描いた画像"></div>
-  <figcaption><b>${title}</b> — ${note}<br><a href="${url}">${url}</a></figcaption>
+  const pane = (shot, [key, label, about]) => {
+    const e = shot.engines[key];
+    if (!e) return '';
+    const t = e.timing ?? null;
+    const num = e.billedMs != null
+      ? `課金 ${e.billedMs} ms`
+      : (t ? `${t.passes} パス · CSS ${t.css.fetched} 枚 · 画像 ${t.img.fetched} 枚` : '');
+    return `<figure class="shot ${key}">
+  <div class="bar"><span class="dot"></span>${label}<span class="sp">${e.kb} KB</span></div>
+  <div class="body"><a href="${e.file}"><img src="${e.file}" width="${shot.w}" height="${shot.h}"
+       alt="${shot.title} を ${label} が描いた画像"></a></div>
+  <figcaption>${about}<br><span class="num">${num}</span></figcaption>
 </figure>`;
+  };
+
+  const trio = (shot) => `<h3>${shot.title}</h3>
+<p class="shotmeta">${shot.note}<br><a href="${shot.url}">${shot.url}</a> · ${shot.w}×${shot.h}</p>
+<div class="trio">${ENGINES.map((en) => pane(shot, en)).join('\n')}</div>`;
 
   return `<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
@@ -263,8 +302,11 @@ export function demoHtml(origin) {
   <p class="lede">以下の画像は全部、この Worker が Wasm の中で描きました。</p>
 </header>
 
-<h2>実際のサイトを描く</h2>
-${DEMO_SHOTS.map(shot).join('\n')}
+<h2>3 つのブラウザで同じページを撮る</h2>
+<p>左が本物のブラウザ (Chromium)、中央が Cloudflare の Kitesurf、右がこれです。3 枚は<b>同じ時刻に撮っています</b> — ja.wikipedia のトップページは日ごとに変わるので、別々に撮るとエンジンの違いとページの違いが混ざります。画像を押すと元の大きさで開きます。</p>
+<p class="hint">撮影 ${new Date(SHOTS.capturedAt).toISOString().replace('T', ' ').slice(0, 16)} UTC。下の「自分で試す」だけはその場で描きます。</p>
+
+${SHOTS.shots.map(trio).join('\n')}
 
 <h2>自分で試す</h2>
 <p>好きな URL を入れてください。この場に画像が出ます。</p>

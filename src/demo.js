@@ -261,7 +261,7 @@ export function demoHtml(origin) {
   const ENGINES = [
     ['chromium', 'Chromium', '本物のブラウザ。Browser Run の既定'],
     ['kitesurf', 'Kitesurf', 'Cloudflare 版。Chromium を使わない'],
-    ['mine', 'browser-on-workers', 'この記事で組んだもの。公開情報だけを見て作った'],
+    ['mine', '疑似 Kitesurf', '公開情報だけを見て組んだもの (browser-on-workers)'],
   ];
 
   const pane = (shot, [key, label, about]) => {
@@ -303,7 +303,7 @@ export function demoHtml(origin) {
 </header>
 
 <h2>3 つのブラウザで同じページを撮る</h2>
-<p>左が本物のブラウザ (Chromium)、中央が Cloudflare の Kitesurf、<b>右がこのページを配信しているブラウザ</b>です。3 枚は<b>同じ時刻に撮っています</b> — ja.wikipedia のトップページは日ごとに変わるので、別々に撮るとエンジンの違いとページの違いが混ざります。画像を押すと元の大きさで開きます。</p>
+<p>左が本物のブラウザ (Chromium)、中央が Cloudflare の <b>本物の Kitesurf</b>、右が<b>この記事で組んだ疑似 Kitesurf</b>です。3 枚は<b>同じ時刻に撮っています</b> — ja.wikipedia のトップページは日ごとに変わるので、別々に撮るとエンジンの違いとページの違いが混ざります。画像を押すと元の大きさで開きます。</p>
 <p class="hint">撮影 ${new Date(SHOTS.capturedAt).toISOString().replace('T', ' ').slice(0, 16)} UTC。下の「自分で試す」だけはその場で描きます。</p>
 
 ${SHOTS.shots.map(trio).join('\n')}
@@ -331,7 +331,7 @@ ${SHOTS.shots.map(trio).join('\n')}
     <figcaption><b>6 つとも緑になります</b> — 最後の枠の 5000 万回のループも、数十ミリ秒で終わるので</figcaption>
   </figure>
   <figure class="shot wasm">
-    <div class="bar"><span class="dot"></span>この Worker が <b>Wasm の中で</b>描いた画像<span class="sp">PNG · 760×560</span></div>
+    <div class="bar"><span class="dot"></span><b>疑似 Kitesurf</b> が描いた画像<span class="sp">PNG · 760×560</span></div>
     <div class="body"><img src="${origin}/js.png" width="760" height="560" alt="同じページを、この Worker が描いた画像。上の 5 つの枠は緑で、最後の枠だけ灰色のまま。"></div>
     <figcaption><b>最後の枠だけ灰色のまま</b> — Boa はループ 50 万回で JavaScript を止めます。止まる前に書いた 5 つは残ります</figcaption>
   </figure>
@@ -423,7 +423,7 @@ try {
         if (timing.usedNoJs) meta.push('JS を切って描き直した');
         else if (timing.jsErrors) meta.push('JS のエラー ' + timing.jsErrors + ' 件');
         out.innerHTML = '<figure class="shot">'
-          + '<div class="bar"><span class="dot"></span>この画像は <b>Chromium を使わずに</b>描いています'
+          + '<div class="bar"><span class="dot"></span><b>疑似 Kitesurf</b> が描いた画像'
           + '<span class="sp">' + w + '×' + h + '</span></div>'
           + '<div class="body"><img src="' + img + '" alt="' + url + ' を描いた画像"></div>'
           + '<figcaption><b>' + meta.join(' · ') + '</b><br>' + url.replace(/[<&]/g, '') + '</figcaption>'

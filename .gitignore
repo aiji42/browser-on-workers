@@ -3,6 +3,8 @@ crate/target/
 .wrangler/
 *.png
 !docs/*.png
+# 3 つのブラウザの比較。ページから参照しているので、無いとデモが壊れる
+!public/shots/*.png
 
 # 切り分けに使った第三者のページの HTML (952KB)。テストは無ければ skip する
 crate/fixtures/

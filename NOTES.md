@@ -100,6 +100,88 @@ isolate ごとに 1 回のはずだが、**6 回連続で叩いたら 6 回と�
 その間クロックが固定される。`fetchMs` だけが数字を持つのはそこに I/O があるから。
 Kitesurf の中で `Date.now()` が 3 ms 刻みで止まって見えたのと同じ現象。
 
+## eval が使える場所と、I/O が使える場所は排他
+
+ここが今回いちばん大きい発見。
+
+**ページの `<script>` を V8 で動かす方法はある。** Workers は文字列からコードを
+作れないが、**動的 Worker (Dynamic Workers) のモジュールとして渡せば V8 が
+普通にコンパイルする。** Kitesurf の PageScript はこの形で、発表記事も
+「Dynamic Workers を使ってページごとの PageScript isolate を立ち上げ、
+clean な globalThis と DOM document object を用意する」と書いている。
+
+`worker_loaders` binding は open beta で、**Paid ユーザー全員が使える**。
+
+```jsonc
+"worker_loaders": [{ "binding": "LOADER" }]
+```
+
+動的 Worker の中でエンジンの指紋を測ると、全部 V8 だった。
+
+```
+hasCaptureStackTrace: "function"    (Boa なら undefined)
+hasStack:             "string"      (Boa なら undefined)
+typedArray:           "undefined"   (Boa なら function)
+nullError: "Cannot read properties of null"   (Boa は小文字の c)
+callError: "1 is not a function"              (Boa は not a callable function)
+```
+
+### そして eval も通る。ただし場所が限られる
+
+同じ 7 項目を、モジュールの評価中 (グローバルスコープ) と handler の中で
+1 つずつ試した結果。
+
+| | グローバルスコープ | handler の中 |
+| --- | --- | --- |
+| `eval('1+1')` | **ok: 2** | `EvalError: Code generation from strings disallowed` |
+| `new Function` | **ok: 2** | 同じ `EvalError` |
+| `setTimeout` | **Disallowed operation called within global scope** | ok |
+| `fetch` (await する) | **同じ Disallowed** | ok |
+| `crypto.getRandomValues` | **同じ Disallowed** | ok |
+| `Math.random` | ok | ok |
+| `Date.now()` | **0** | 実時刻 |
+
+**排他になっている。** グローバルスコープでは eval が通るが I/O とタイマーが
+使えない。handler では I/O とタイマーが使えるが eval が通らない。
+
+ブラウザはページの資源を取りに行き、タイマーを回さなければならない。
+つまり **handler で走らせるしかなく、handler では eval が使えない。**
+だから別の JS エンジンを持ち込むことになる。
+
+「Workers が eval を禁じているから Boa が要る」ではなく、
+**「eval が使える場所と、ブラウザが必要とする場所が重ならないから Boa が要る」**
+というのが正確なところ。
+
+おまけ: グローバルスコープの `Date.now()` は **0** を返す。起動時は時計が
+文字どおりゼロから始まる。
+
+### 15 MB の engine は動的 Worker に持ち込める
+
+`modules` に `{ wasm: ... }` で渡す。**コンパイル済みの `WebAssembly.Module` を
+そのまま渡せる**ので、ページごとに再コンパイルしなくてよい。
+
+| 渡し方 | 所要 |
+| --- | --- |
+| `WebAssembly.Module` をそのまま | **170 ms** |
+| Static Assets から 15 MB を読んで ArrayBuffer | 1567 ms |
+
+どちらも動的 Worker の中で `WebAssembly.Module` として届き、export は 24 個。
+
+### Kitesurf は eval を Boa 実装に差し替えている (推定)
+
+`plain` が V8 で `viaEval` が Boa なのに、両方 1 つの isolate で動いている。
+グローバル `eval` を Boa 呼び出しに差し替えていると考えるのが自然
+(だから eval の中のコードは呼び出し元のローカルスコープを見られない)。
+
+`stack` の中身が `/__ks_user_classic_regular.js` を指すので、ページの
+スクリプトはファイルとして isolate に持ち込まれている。
+
+### 再現 (2026-09-08)
+
+`probes/11-two-engines.mjs` を今日もう一度回した。100 万回のループで、
+Kitesurf の `plain` が 3 ms、`viaNewFunction` が 546 ms (**182 倍遅い**)。
+自作の側で Boa と V8 を比べた 194 倍、記事に書いた 226 倍と同じ桁。
+
 ## 「JS が動く」と「React が動く」の間の距離
 
 `react.dev` を手がかりに、engine に何が足りないのかを測った。

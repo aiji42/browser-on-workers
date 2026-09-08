@@ -13,6 +13,7 @@ import { encodePNG } from './png.js';
 import { demoHtml, cardHtml, jsDemoHtml, DEMO_SHOTS } from './demo.js';
 import { fetchHtml, fetchStylesheets, fetchImages, fetchResources } from './outbound.js';
 import { injectPolyfill } from './polyfill.js';
+import { runInV8, probeWasmInV8, probeEvalContext, probeTopLevelAwait, probeExclusivity } from './v8page.js';
 
 export { RateLimiter } from './ratelimit.js';
 
@@ -215,6 +216,103 @@ export default {
         return Response.json({ ok: false, error: describeError(e) }, { status: 500 });
       }
     }
+    // 同じループを Worker の V8 で回す。ページの中の Boa と比べるため。
+    // Workers は eval を禁じているので、ループは文字列から作れない。ここに直接書く
+    if (url.pathname === '/bench') {
+      const n = Math.min(50_000_000, Math.max(1, Number(url.searchParams.get('n')) || 200_000));
+      const limited = await overLimit(env, request, 'demo');
+      if (limited) return tooMany(limited);
+      const t = Date.now();
+      let x = 0;
+      for (let i = 0; i < n; i++) x += i % 7;
+      // cpuTime は wrangler tail で見る。Date.now() は I/O の無い区間で進まないので、
+      // ここの ms はほぼ 0 になる
+      return Response.json({ engine: 'V8 (Worker)', n, x, ms: Date.now() - t });
+    }
+
+    // 「eval が使える場所」と「I/O が使える場所」が排他かを確かめる
+    if (url.pathname === '/v8exclusive') {
+      const limited = await overLimit(env, request, 'demo');
+      if (limited) return tooMany(limited);
+      try {
+        return Response.json({ ok: true, ...(await probeExclusivity(env, `excl:${Math.random()}`)) });
+      } catch (e) {
+        return Response.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });
+      }
+    }
+
+    // top-level await を挟んでも eval が通るか。通るなら一発勝負の用途では Boa が要らない
+    if (url.pathname === '/v8await') {
+      const limited = await overLimit(env, request, 'demo');
+      if (limited) return tooMany(limited);
+      try {
+        return Response.json({ ok: true, ...(await probeTopLevelAwait(env, `tla:${Math.random()}`)) });
+      } catch (e) {
+        return Response.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });
+      }
+    }
+
+    // eval が通る場所を特定する
+    if (url.pathname === '/v8eval') {
+      const limited = await overLimit(env, request, 'demo');
+      if (limited) return tooMany(limited);
+      try {
+        return Response.json({ ok: true, ...(await probeEvalContext(env, url.searchParams.get('id') ?? `evalctx:${Math.random()}`)) });
+      } catch (e) {
+        return Response.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });
+      }
+    }
+
+    // 15 MB の engine を動的 Worker に持ち込めるかを試す。
+    // ?how=compiled で WebAssembly.Module をそのまま、?how=bytes で ArrayBuffer を渡す
+    if (url.pathname === '/v8wasm') {
+      const limited = await overLimit(env, request, 'demo');
+      if (limited) return tooMany(limited);
+      const how = url.searchParams.get('how') === 'bytes' ? 'bytes' : 'compiled';
+      const id = url.searchParams.get('id') ?? `engine:${how}`;
+      const t = Date.now();
+      try {
+        const out = await probeWasmInV8(env, request, how, id);
+        return Response.json({ ok: true, how, ms: Date.now() - t, ...out });
+      } catch (e) {
+        return Response.json({ ok: false, how, ms: Date.now() - t, error: String(e?.message ?? e) }, { status: 500 });
+      }
+    }
+
+    // 本体の Worker で eval を呼ぶと何が起きるかを、その場で示す。
+    // 動的 Worker との対比のため (あちらでは通る)
+    if (url.pathname === '/eval-here') {
+      const out = {};
+      try {
+        out.eval = String(eval('1+1'));
+      } catch (e) {
+        out.eval = `${e.name}: ${e.message}`;
+      }
+      try {
+        out.newFunction = String(new Function('return 1+1')());
+      } catch (e) {
+        out.newFunction = `${e.name}: ${e.message}`;
+      }
+      return Response.json({ where: '本体の Worker', ...out });
+    }
+
+    // 動的 Worker の中で、ページのコードを V8 に渡してみる。
+    // ?code= に JavaScript を書くと、その結果と「どのエンジンが答えたか」が返る
+    if (url.pathname === '/v8') {
+      const limited = await overLimit(env, request, 'demo');
+      if (limited) return tooMany(limited);
+      const code = url.searchParams.get('code')
+        ?? 'var x = 0; for (var i = 0; i < 200000; i++) x += i % 7; return x;';
+      // id を変えると別の Worker になる。同じコードなら使い回したいので中身で決める
+      const id = url.searchParams.get('id') ?? `v8:${code.length}:${code.slice(0, 40)}`;
+      try {
+        const out = await runInV8(env, id, code);
+        return Response.json({ ok: true, ...out });
+      } catch (e) {
+        return Response.json({ ok: false, error: String(e?.message ?? e), stack: e?.stack }, { status: 500 });
+      }
+    }
+
     if (url.pathname === '/usage') {
       return new Response(usage, { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     }

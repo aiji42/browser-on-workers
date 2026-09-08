@@ -23,6 +23,10 @@
   // 1 リクエストで 0.1〜2 秒の CPU を使うので、公開したままにするなら制限が要る。
   // 組み込みの Rate Limiting binding (unsafe.bindings の ratelimit) は効かなかった
   // (20 発通しても success しか返らない) ので、Durable Object で数える
+  // ページの <script> を V8 で動かすための口。
+  // Workers は文字列からコードを作れないが、動的 Worker のモジュールとして
+  // 渡せば V8 が普通にコンパイルする。Kitesurf の PageScript がこれ
+  "worker_loaders": [{ "binding": "LOADER" }],
   "durable_objects": {
     "bindings": [{ "name": "RATE", "class_name": "RateLimiter" }]
   },

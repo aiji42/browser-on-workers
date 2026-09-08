@@ -1,0 +1,185 @@
+{
+  "capturedAt": "2026-09-08T07:09:12.800Z",
+  "shots": [
+    {
+      "slug": "ja-wikipedia-org",
+      "url": "https://ja.wikipedia.org/wiki/メインページ",
+      "w": 1000,
+      "h": 780,
+      "title": "ja.wikipedia.org",
+      "note": "日本語の見出しと本文、2 カラム、写真 24 枚。CSS は 3 枚で 231 KB",
+      "engines": {
+        "chromium": {
+          "file": "/shots/ja-wikipedia-org.chromium.png",
+          "kb": 390,
+          "ms": 1953,
+          "billedMs": 1038,
+          "timing": null
+        },
+        "kitesurf": {
+          "file": "/shots/ja-wikipedia-org.kitesurf.png",
+          "kb": 390,
+          "ms": 5742,
+          "billedMs": 5341,
+          "timing": null
+        },
+        "mine": {
+          "file": "/shots/ja-wikipedia-org.mine.png",
+          "kb": 359,
+          "ms": 2700,
+          "billedMs": null,
+          "timing": {
+            "js": true,
+            "fetchMs": 28,
+            "subresourceMs": 52,
+            "css": {
+              "fetched": 3,
+              "skipped": 0,
+              "bytes": 230947
+            },
+            "img": {
+              "fetched": 24,
+              "skipped": 0,
+              "tooBig": 0,
+              "bytes": 162714,
+              "decodedBytes": 1299560
+            },
+            "renderMs": 0,
+            "recoverFetchMs": 466,
+            "passes": 2,
+            "recovered": [
+              {
+                "asked": 15,
+                "got": 15,
+                "bytes": 120504,
+                "tooBig": 0
+              }
+            ],
+            "jsErrors": 1,
+            "encodeMs": 0
+          }
+        }
+      }
+    },
+    {
+      "slug": "developer-mozilla-org",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map",
+      "w": 1000,
+      "h": 780,
+      "title": "developer.mozilla.org",
+      "note": "CSS 20 枚。本文中の <code>map()</code> が等幅で出ている。JS は 938 KB 実行してエラー 0 件",
+      "engines": {
+        "chromium": {
+          "file": "/shots/developer-mozilla-org.chromium.png",
+          "kb": 54,
+          "ms": 2324,
+          "billedMs": 1400,
+          "timing": null
+        },
+        "kitesurf": {
+          "file": "/shots/developer-mozilla-org.kitesurf.png",
+          "kb": 66,
+          "ms": 6761,
+          "billedMs": 5718,
+          "timing": null
+        },
+        "mine": {
+          "file": "/shots/developer-mozilla-org.mine.png",
+          "kb": 57,
+          "ms": 1094,
+          "billedMs": null,
+          "timing": {
+            "js": true,
+            "fetchMs": 182,
+            "subresourceMs": 20,
+            "css": {
+              "fetched": 18,
+              "skipped": 0,
+              "bytes": 84345
+            },
+            "img": {
+              "fetched": 0,
+              "skipped": 0,
+              "bytes": 0
+            },
+            "renderMs": 0,
+            "recoverFetchMs": 41,
+            "passes": 2,
+            "recovered": [
+              {
+                "asked": 32,
+                "got": 32,
+                "bytes": 966614,
+                "tooBig": 0
+              }
+            ],
+            "jsErrors": 1,
+            "encodeMs": 0
+          }
+        }
+      }
+    },
+    {
+      "slug": "react-dev",
+      "url": "https://react.dev/",
+      "w": 1000,
+      "h": 780,
+      "title": "react.dev",
+      "note": "ページの JS を動かすと React のハイドレーションが本文を消すので、JS を切って描き直したもの",
+      "engines": {
+        "chromium": {
+          "file": "/shots/react-dev.chromium.png",
+          "kb": 153,
+          "ms": 4517,
+          "billedMs": 3625,
+          "timing": null
+        },
+        "kitesurf": {
+          "file": "/shots/react-dev.kitesurf.png",
+          "kb": 84,
+          "ms": 4190,
+          "billedMs": 3758,
+          "timing": null
+        },
+        "mine": {
+          "file": "/shots/react-dev.mine.png",
+          "kb": 67,
+          "ms": 6975,
+          "billedMs": null,
+          "timing": {
+            "js": true,
+            "fetchMs": 91,
+            "subresourceMs": 171,
+            "css": {
+              "fetched": 1,
+              "skipped": 0,
+              "bytes": 108608
+            },
+            "img": {
+              "fetched": 24,
+              "skipped": 0,
+              "tooBig": 0,
+              "bytes": 61671,
+              "decodedBytes": 1133824
+            },
+            "renderMs": 0,
+            "recoverFetchMs": 300,
+            "passes": 2,
+            "recovered": [
+              {
+                "asked": 66,
+                "got": 66,
+                "bytes": 3128288,
+                "tooBig": 0
+              }
+            ],
+            "blankWithJs": true,
+            "usedNoJs": true,
+            "jsErrors": 1,
+            "encodeMs": 0
+          }
+        }
+      }
+    }
+  ]
+}

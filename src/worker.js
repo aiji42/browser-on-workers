@@ -12,6 +12,7 @@
 import { encodePNG } from './png.js';
 import { demoHtml, cardHtml, jsDemoHtml, DEMO_SHOTS } from './demo.js';
 import { fetchHtml, fetchStylesheets, fetchImages, fetchResources } from './outbound.js';
+import { injectPolyfill } from './polyfill.js';
 
 export { RateLimiter } from './ratelimit.js';
 
@@ -269,6 +270,24 @@ export default {
         baseUrl = got.finalUrl;
       }
       timing.fetchMs = Date.now() - t;
+
+      // engine に無いホスト側の Web API (matchMedia / URLSearchParams / localStorage /
+      // 3 つの Observer / performance.now / fetch) を、ページのスクリプトより先に埋める。
+      // 本来は Rust 側に実装するものだが、何が足りないかを測るには JS が早い。
+      // ?polyfill=0 で外して、有る無しを比べられるようにしてある
+      const withPolyfill = runJs && url.searchParams.get('polyfill') !== '0';
+      if (withPolyfill) html = injectPolyfill(html);
+      timing.polyfill = withPolyfill;
+
+      // 切り分け用。?scripts=inline で外部のスクリプトだけ落とす。
+      // 「壊れるのはインラインのせいか、読み込んだバンドルのせいか」を分ける
+      if (runJs && url.searchParams.get('scripts') === 'inline') {
+        const before = html.length;
+        html = html
+          .replace(/<script\b[^>]*\bsrc\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replace(/<script\b[^>]*\bsrc\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)[^>]*\/?>/gi, '');
+        timing.strippedBytes = before - html.length;
+      }
 
       // Blitz はサブリソースを自分で取りに行かないので、Worker が取ってきて
       // 「URL -> バイト列」の表に入れる。Blitz は <link> や <img> から

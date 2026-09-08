@@ -100,6 +100,58 @@ isolate ごとに 1 回のはずだが、**6 回連続で叩いたら 6 回と�
 その間クロックが固定される。`fetchMs` だけが数字を持つのはそこに I/O があるから。
 Kitesurf の中で `Date.now()` が 3 ms 刻みで止まって見えたのと同じ現象。
 
+## 「JS が動く」と「React が動く」の間の距離
+
+`react.dev` を手がかりに、engine に何が足りないのかを測った。
+
+### 足りない Web API は 11 個だった
+
+44 個の API の有無を 1 枚の絵に出させて数えた (`?html=` に検査ページを渡す)。
+**DOM の主要な口はだいたい揃っている** — `querySelector` / `createElement` /
+`classList` / `addEventListener` / `getBoundingClientRect` / `insertBefore` /
+`cloneNode` / `DocumentFragment` / `DOMParser` / `customElements` /
+`getComputedStyle` / `requestAnimationFrame` / `history.pushState` /
+`Proxy` / `Reflect` / `structuredClone` / `queueMicrotask` は全部ある。
+
+無かったのはホスト側の 11 個。
+
+```
+matchMedia / URLSearchParams / fetch / localStorage / sessionStorage /
+MutationObserver / IntersectionObserver / ResizeObserver /
+performance.now / navigator / screen
+```
+
+本来は Rust 側に実装するもの (Kitesurf はそうしているはず) だが、
+**何が足りないかを測るには JS で埋めるのが早い**。`src/polyfill.js` に
+200 行ほどの shim を書いて、ページのスクリプトより先に差し込んだ
+(`?polyfill=0` で外せる)。
+
+埋めた順に `react.dev` のエラーが減った。
+
+| shim | 残ったエラー |
+| --- | --- |
+| なし | `TypeError: not a callable function` (`window.matchMedia`) |
+| matchMedia など 9 個 | `TypeError: cannot convert 'null' or 'undefined' to object` (`navigator.platform.includes`) |
+| navigator / screen も | **0 件** |
+
+`navigator.platform` は `Win32` と答えることにした。`MacIntel` と答えると
+react.dev が \u2318 を出そうとして、持っていないグリフなので豆腐になる。
+
+### それでもページは白い。原因は React 側
+
+エラーが 0 件になっても、`react.dev` は白いまま。**外部スクリプトだけ落とすと
+(`?scripts=inline`) 正しく描ける。** 941 バイトの `<script src>` を消しただけで
+本文が出る。つまりインラインは全部通っていて、**React のバンドルが本文を消している**。
+
+`__NEXT_DATA__` を見ると `"content":"[]"` で、**このページの本文はサーバが吐いた
+HTML の中にしか無い**。だから React が最初から描き直す判断をした時点で、本文は
+どこからも復元できない。
+
+Kitesurf は同じページを正しく描く (`billed 3758ms`、本文 8303 文字)。
+つまり残っているのは「足りない API を足す」作業ではなく、**React の
+ハイドレーションが諦めないくらい DOM を忠実にする**作業。API の一覧のような
+チェックリストが無い側の仕事で、ここが本当に高い。
+
 ## ページの JavaScript を動かすと、動かさないより悪くなることがある
 
 `react.dev` が真っ白になった。**`?js=0` を付けると正しく描ける。**

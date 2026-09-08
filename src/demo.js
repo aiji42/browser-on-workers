@@ -56,6 +56,21 @@ a{color:var(--accent)}
 }
 .shot figcaption b{color:var(--ink); font-weight:600}
 
+/* 左右に並べて見比べる。iframe は 760x560 のまま描かせて、
+   右の PNG と同じ縮尺になるように transform で縮める */
+.pair{display:flex; flex-wrap:wrap; gap:14px; margin:0 0 26px}
+.pair > .shot{flex:1 1 400px; margin:0; min-width:0}
+.pair .bar .dot{background:#7fb2ff}
+.pair .shot.wasm .bar .dot{background:#33d17a}
+.stage{
+  position:relative; width:100%; aspect-ratio:760 / 560;
+  overflow:hidden; border:1px solid var(--line); background:#fff;
+}
+.stage iframe{
+  position:absolute; top:0; left:0; width:760px; height:560px;
+  border:0; transform-origin:top left;
+}
+
 /* 自分で試す欄 */
 form{
   display:flex; flex-wrap:wrap; gap:8px; align-items:center;
@@ -265,11 +280,22 @@ ${DEMO_SHOTS.map(shot).join('\n')}
 <h2>JavaScript も動く</h2>
 <p>ページの <code>&lt;script&gt;</code> を <a href="https://boajs.dev">Boa</a> (Rust で書かれた JavaScript エンジン) で実行しています。Workers は <code>eval</code> と <code>new Function</code> を禁じていますが、Boa が自分でコンパイルするので、<strong>ページの中の <code>eval</code> は通ります</strong>。</p>
 
-<figure class="shot">
-  <div class="bar"><span class="dot"></span>この画像は <b>Chromium を使わずに</b>描いています<span class="sp">760×560</span></div>
-  <div class="body"><img src="${origin}/js.png" width="760" height="560" alt="JavaScript が DOM を書き換えたことを示すページを描いた画像"></div>
-  <figcaption><b>緑の枠はページの JavaScript が書いたもの</b> — 最後の枠は 5000 万回のループで、Boa の実行上限 (50 万回) に当たるので書き換わりません。それより前に書いた 5 つは残ります<br><a href="/js">同じページを自分のブラウザで開く</a> (普通のブラウザならループが終わるので、最後の枠も緑になります)</figcaption>
-</figure>
+<p>同じページを左右に並べます。<b>左はあなたのブラウザ</b>が表示したもの、<b>右はこの Worker が Wasm の中で描いた画像</b>です。緑の枠はどちらもページの <code>&lt;script&gt;</code> が書き換えたものです。</p>
+
+<div class="pair">
+  <figure class="shot live">
+    <div class="bar"><span class="dot"></span>あなたのブラウザ<span class="sp">iframe · 760×560</span></div>
+    <div class="body"><div class="stage"><iframe id="live" src="${origin}/js" title="JavaScript のデモページを、あなたのブラウザで表示したもの" scrolling="no" loading="lazy"></iframe></div></div>
+    <figcaption><b>6 つとも緑になります</b> — 最後の枠の 5000 万回のループも、数十ミリ秒で終わるので</figcaption>
+  </figure>
+  <figure class="shot wasm">
+    <div class="bar"><span class="dot"></span>この Worker が <b>Wasm の中で</b>描いた画像<span class="sp">PNG · 760×560</span></div>
+    <div class="body"><img src="${origin}/js.png" width="760" height="560" alt="同じページを、この Worker が描いた画像。上の 5 つの枠は緑で、最後の枠だけ灰色のまま。"></div>
+    <figcaption><b>最後の枠だけ灰色のまま</b> — Boa はループ 50 万回で JavaScript を止めます。止まる前に書いた 5 つは残ります</figcaption>
+  </figure>
+</div>
+
+<p class="hint">違いは最後の枠だけです。<a href="/js">ページを単体で開く</a>こともできます。</p>
 
 <p>V8 と Boa が同じ isolate に同居する形になります。Worker のコードは V8 で動き、ページのコードは Wasm の中の Boa で動く。Cloudflare の <a href="https://blog.cloudflare.com/kitesurf/">Kitesurf</a> も同じ構造です。</p>
 
@@ -306,6 +332,19 @@ ${DEMO_SHOTS.map(shot).join('\n')}
 
 </div>
 <script>
+// iframe は 760px 幅で描かせて、枠の幅に合わせて縮める。
+// そうすると右の PNG と同じ縮尺になり、文字の大きさまで並べて比べられる
+try {
+  var live = document.getElementById('live');
+  var fit = function () {
+    var stage = live.parentNode;
+    live.style.transform = 'scale(' + (stage.clientWidth / 760) + ')';
+  };
+  fit();
+  window.addEventListener('resize', fit);
+  live.addEventListener('load', fit);
+} catch (err) { /* iframe を扱えない環境では素のまま */ }
+
 // 自分で試す欄。この場に画像を出す。
 // このページを自分自身で描くこともあるので、失敗しても本文が壊れないようにしておく
 try {

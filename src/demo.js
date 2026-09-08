@@ -159,10 +159,11 @@ h1{margin:0 0 6px;font-size:24px;letter-spacing:-.01em}
 <div class="box" id="ev"><span class="lbl">eval</span>実行前</div>
 <div class="box" id="timer"><span class="lbl">setTimeout</span>実行前</div>
 <div class="box" id="layout"><span class="lbl">レイアウト参照</span>実行前</div>
-<div class="box" id="guard"><span class="lbl">暴走の停止</span>この枠だけ緑になりません</div>
-<p class="foot">最後に <code>while (true) {}</code> を回しています。実行上限に当たると
-JavaScript がそこで止まるので、この枠は書き換わりません。上の 5 つは、止まる前に
-書かれたものです。</p>
+<div class="box" id="guard"><span class="lbl">実行上限</span>実行前</div>
+<p class="foot">最後に <b>5000 万回</b>のループを回しています。普通のブラウザなら数十ミリ秒で
+終わるので、上の枠は緑になります。このブラウザ (Boa) はループの回数に上限を持っていて
+50 万回で JavaScript を止めるので、<b>この枠だけ書き換わりません</b>。
+上の 5 つは、止まる前に書かれたものです。</p>
 
 <script>
   function fill(id, html) {
@@ -177,12 +178,16 @@ JavaScript がそこで止まるので、この枠は書き換わりません。
   setTimeout(function () { fill('timer', 'タイマーも走りました'); }, 10);
   // レイアウトが付いた状態でスクリプトを走らせているので、寸法が読める
   fill('layout', 'body の幅は <b>' + document.body.offsetWidth + '</b> px');
-  // 無限ループは実行上限で止まる。Boa の RuntimeLimitError はページ側の
-  // catch には来ないので、スクリプトはここで終わる。
-  // 止まるまでに触った DOM はそのまま描かれる (上の 5 つが緑のまま残る)
+  // 実行上限の見せ方。
+  //
+  // 本当の無限ループにすると、このページを普通のブラウザで開いたときに
+  // タブが固まる。だから終わるループにして、回数だけ上限より多くしておく。
+  // 普通のブラウザ: 数十ミリ秒で終わって、この枠も緑になる。
+  // このブラウザ (Boa): 50 万回で止まるので、この枠だけ書き換わらない
+  // (RuntimeLimitError はページ側の catch には来ないので、ここで終わる)
   var n = 0;
-  while (true) { n++; }
-  // ここには来ない
+  for (var i = 0; i < 50000000; i++) { n++; }
+  fill('guard', 'ループを <b>' + n.toLocaleString('en-US') + '</b> 回まわしました');
 </script>
 </body></html>`;
 }
@@ -227,10 +232,10 @@ export function demoHtml(origin) {
   return `<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>browser-on-workers — Chromium なしでスクリーンショットを撮る</title>
-<meta name="description" content="HTML のパースから JavaScript の実行まで、すべて Cloudflare Workers の isolate の中で動く小さなブラウザ。">
-<meta property="og:title" content="Chromium なしでスクリーンショットを撮る">
-<meta property="og:description" content="HTML のパースから JavaScript の実行まで、すべて Cloudflare Workers の isolate の中。Stylo・Parley・blitz-paint・Boa を wasm32 に載せた。">
+<title>Kitesurf を公開情報だけで作ってみた — browser-on-workers</title>
+<meta name="description" content="Cloudflare の Kitesurf と同じ構成を、発表記事に書かれている部品だけで組んだブラウザ。Chromium を使わず、Cloudflare Workers の isolate の中だけで動く。">
+<meta property="og:title" content="Kitesurf を公開情報だけで作ってみた">
+<meta property="og:description" content="Chromium を使わず、Rust で書いたブラウザエンジンを Wasm にして Cloudflare Workers の isolate で動かす。Stylo・Taffy・Parley・blitz-paint・Boa を wasm32 に載せた。">
 <meta property="og:image" content="${origin}/card.png">
 <meta name="twitter:card" content="summary_large_image">
 <style>${CSS}</style>
@@ -238,8 +243,9 @@ export function demoHtml(origin) {
 
 <header>
   <span class="tag">CLOUDFLARE WORKERS</span>
-  <h1>Chromium なしで、<span>スクリーンショット</span>を撮る</h1>
-  <p class="lede">Rust で書いたブラウザエンジンを Wasm にして、Cloudflare Workers の isolate の中で動かしています。ブラウザのバイナリはどこにもありません。以下の画像は全部、この Worker が描いたものです。</p>
+  <h1>Cloudflare の <span>Kitesurf</span> を、<br>公開情報だけで作ってみた</h1>
+  <p class="lede">Chromium を使わず、Rust で書いたブラウザエンジンを Wasm にして Workers の isolate で動かす。Cloudflare が 2026 年 8 月に発表した <a href="https://blog.cloudflare.com/kitesurf/">Kitesurf</a> と同じ構成を、発表記事に名前が挙がっている部品だけで組んだものです。ソースコードは非公開なので、中身は見ていません。</p>
+  <p class="lede">以下の画像は全部、この Worker が Wasm の中で描きました。</p>
 </header>
 
 <h2>実際のサイトを描く</h2>
@@ -262,7 +268,7 @@ ${DEMO_SHOTS.map(shot).join('\n')}
 <figure class="shot">
   <div class="bar"><span class="dot"></span>この画像は <b>Chromium を使わずに</b>描いています<span class="sp">760×560</span></div>
   <div class="body"><img src="${origin}/js.png" width="760" height="560" alt="JavaScript が DOM を書き換えたことを示すページを描いた画像"></div>
-  <figcaption><b>緑の枠はページの JavaScript が書いたもの</b> — 最後の枠だけは <code>while (true)</code> が実行上限に当たって書き換わりません。それより前に書いた 5 つは残ります<br><a href="/js">同じページを自分のブラウザで開く</a></figcaption>
+  <figcaption><b>緑の枠はページの JavaScript が書いたもの</b> — 最後の枠は 5000 万回のループで、Boa の実行上限 (50 万回) に当たるので書き換わりません。それより前に書いた 5 つは残ります<br><a href="/js">同じページを自分のブラウザで開く</a> (普通のブラウザならループが終わるので、最後の枠も緑になります)</figcaption>
 </figure>
 
 <p>V8 と Boa が同じ isolate に同居する形になります。Worker のコードは V8 で動き、ページのコードは Wasm の中の Boa で動く。Cloudflare の <a href="https://blog.cloudflare.com/kitesurf/">Kitesurf</a> も同じ構造です。</p>
@@ -288,14 +294,14 @@ ${DEMO_SHOTS.map(shot).join('\n')}
 <h2>できないこと</h2>
 <ul>
   <li>フォントに入れた文字しか出ません。いまは Latin と、ひらがな・カタカナ・漢字</li>
-  <li>ページの JavaScript には実行上限があります。<code>while (true)</code> は 27 ms ほどで止まります</li>
+  <li>ページの JavaScript には実行上限があります。<code>while (true)</code> はループ 50 万回で止まります。Boa には実行を中断する仕組みが無いので、上限を自分で積んでいます</li>
   <li>展開すると大きすぎる画像は飛ばします。1 枚で 87 MB になる画像があり、isolate のメモリに載りません</li>
   <li>動くもの (アニメーション、動画、WebGL) は扱いません</li>
   <li>レイアウトが返ってこないページがまだあります</li>
 </ul>
 
 <footer>
-  Rust で書いたブラウザエンジンを Wasm にして Cloudflare Workers の V8 isolate で動かす、という Cloudflare の Kitesurf を見て、同じ構成を公開情報だけから組んでみたものです。
+  発表記事に載っている「Chromium より CPU が 3.1 倍少ない」という数字を外から測ろうとして、測る手段が無いと分かったので、それなら同じ構成で作ってみようと始めたものです。中身は見ていないので、同じ部品でも同じものにはなっていません。
 </footer>
 
 </div>

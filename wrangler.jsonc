@@ -29,6 +29,17 @@
   // Workers は文字列からコードを作れないが、動的 Worker のモジュールとして
   // 渡せば V8 が普通にコンパイルする。Kitesurf の PageScript がこれ
   "worker_loaders": [{ "binding": "LOADER" }],
+  // 動的 Worker のネットワークを、この Worker 自身に通すための binding。
+  //
+  // Worker Loader の `globalOutbound` に Fetcher を渡すと、**子 Worker の
+  // fetch が全部そこへ届く** (URL はページが要求したものそのまま)。
+  // Kitesurf の SandboxOutbound がこの形。子のコードにネットワークの権限を
+  // 持たせず、方針 (大きさの上限、自分のオリジンの拒否) を親の 1 箇所に置ける
+  // 既定の fetch とは**別の entrypoint**に向ける。既定に混ぜると、ページが
+  // 自分のオリジンを要求したときに自分のルーティングに落ちて再帰する
+  "services": [
+    { "binding": "OUTBOUND", "service": "browser-on-workers", "entrypoint": "Outbound" }
+  ],
   "durable_objects": {
     "bindings": [{ "name": "RATE", "class_name": "RateLimiter" }]
   },

@@ -15,7 +15,9 @@ import { fetchHtml, fetchStylesheets, fetchImages, fetchResources, decodeEntitie
 import { injectPolyfill } from './polyfill.js';
 import { runInV8, probeWasmInV8, probeEvalContext, probeTopLevelAwait, probeExclusivity } from './v8page.js';
 import { probeGlobalInit, probeGlobalFetch } from './globalprobe.js';
+import { WorkerEntrypoint } from 'cloudflare:workers';
 import { renderInV8 } from './pagescript.js';
+import { renderInBoaWorker } from './pagescript-boa.js';
 
 export { RateLimiter } from './ratelimit.js';
 
@@ -34,6 +36,66 @@ import initWasm, {
 // バンドルに埋め込まず Static Assets に置いて、実行時に ASSETS binding で読む。
 // Kitesurf も PageRenderer が Static Assets からフォントを取っている。
 // スクリプトサイズに含まれないので、フォントを増やしても上限に効かない
+
+// この Worker 自身のホスト。これ以外が来たら「動的 Worker からの中継の依頼」
+const OWN_HOSTS = new Set(['not-kitesurf.aiji42.dev', 'localhost', '127.0.0.1']);
+
+// 中継で 1 本に許す大きさと時間
+const RELAY_MAX_BYTES = 8 * 1024 * 1024;
+const RELAY_TIMEOUT_MS = 5000;
+
+/**
+ * 動的 Worker からの外向きの取得。**専用の入口**にしてある。
+ *
+ * `globalOutbound` にこの entrypoint を渡すと、子 Worker の `fetch` は
+ * **ページが要求した URL のまま**ここに届く。既定の `fetch` に混ぜると、
+ * ページが `https://not-kitesurf.aiji42.dev/shot?...` を要求したときに
+ * 自分のルーティングに落ちて再帰する。入口を分ければ、そこが起きない。
+ *
+ * 方針 (自分のオリジンの拒否、scheme、大きさの上限、時間切れ) はここ 1 箇所。
+ * 子のコードにネットワークの権限は無い。Kitesurf の SandboxOutbound がこの位置
+ */
+export class Outbound extends WorkerEntrypoint {
+  async fetch(request) {
+    return relayOutbound(new URL(request.url), request);
+  }
+}
+
+/** 動的 Worker からの取得を中継する。方針はここだけ */
+async function relayOutbound(url, request) {
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    return new Response('scheme が違う', { status: 400 });
+  }
+  // 自分を取りに行かせない (再帰と、内部の口の露出を止める)
+  if (OWN_HOSTS.has(url.hostname)) {
+    return new Response('この host は取れない', { status: 403 });
+  }
+  try {
+    const res = await fetch(url.href, {
+      method: 'GET',
+      headers: {
+        // 素の Workers の User-Agent だと弾くサイトがある
+        'user-agent': request.headers.get('user-agent')
+          ?? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36',
+        accept: '*/*',
+        'accept-language': 'ja,en;q=0.8',
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
+    });
+    if (!res.ok) return new Response(null, { status: res.status });
+    const len = Number(res.headers.get('content-length') ?? 0);
+    if (len > RELAY_MAX_BYTES) return new Response('大きすぎる', { status: 413 });
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength > RELAY_MAX_BYTES) return new Response('大きすぎる', { status: 413 });
+    return new Response(buf, {
+      status: 200,
+      headers: { 'content-type': res.headers.get('content-type') ?? 'application/octet-stream' },
+    });
+  } catch (e) {
+    return new Response(String(e?.message ?? e).slice(0, 120), { status: 504 });
+  }
+}
 
 // 登録順が優先順位になるので、Latin を先、日本語を後にする
 // (どちらも持っている英数字は Latin 側で出る)
@@ -378,6 +440,102 @@ export default {
             'x-page-script': JSON.stringify(
               url.searchParams.get('debug') ? report : { ...report, bodyHtml: undefined },
             ).replace(/[^\x20-\x7e]/g, '?'),
+          },
+        });
+      } catch (e) {
+        return Response.json({ ok: false, error: describeError(e), timing }, { status: 500 });
+      }
+    }
+
+    // 子 Worker の fetch が本当に親に届くか (SandboxOutbound の形が効くか)
+    if (url.pathname === '/aoutbound') {
+      const limited = await overLimit(env, request, 'demo');
+      if (limited) return tooMany(limited);
+      const target = url.searchParams.get('u') ?? 'https://example.com/';
+      const stub = env.LOADER.get(`out:${Math.random()}`, async () => ({
+        compatibilityDate: '2026-09-01',
+        modules: {
+          'entry.js': `
+export default {
+  async fetch(request) {
+    const u = new URL(request.url).searchParams.get('u');
+    const out = { asked: u };
+    try {
+      const res = await fetch(u);
+      out.status = res.status;
+      const text = await res.text();
+      out.bytes = text.length;
+      out.head = text.slice(0, 80);
+      // 親のオリジンを取りに行くと止まるか
+      const self = await fetch('https://not-kitesurf.aiji42.dev/health');
+      out.selfStatus = self.status;
+    } catch (e) {
+      out.error = String(e && e.message).slice(0, 160);
+    }
+    return Response.json(out);
+  },
+};
+`,
+        },
+        mainModule: 'entry.js',
+        globalOutbound: env.OUTBOUND,
+      }));
+      const res = await stub.getEntrypoint().fetch(`https://page.invalid/?u=${encodeURIComponent(target)}`);
+      return new Response(await res.text(), { headers: { 'content-type': 'application/json' } });
+    }
+
+    // 構成 A: 動的 Worker の handler で Boa に走らせ、資源は解釈の途中で取りに行く。
+    // 公式の Kitesurf にいちばん近い形
+    if (url.pathname === '/ashot') {
+      const target = url.searchParams.get('url');
+      const inlineHtml = url.searchParams.get('html');
+      if (!target && !inlineHtml) return new Response('url または html が必要です', { status: 400 });
+      const w = Math.min(2000, Math.max(64, Number(url.searchParams.get('w')) || DEFAULT_WIDTH));
+      const h = Math.min(4000, Math.max(64, Number(url.searchParams.get('h')) || DEFAULT_HEIGHT));
+      const limited = await overLimit(env, request, 'shot');
+      if (limited) return tooMany(limited);
+
+      const timing = {};
+      try {
+        let t = Date.now();
+        let html = inlineHtml ?? '';
+        let baseUrl = target ?? 'https://inline.invalid/';
+        if (target) {
+          const got = await fetchHtml(target);
+          html = got.html;
+          baseUrl = got.finalUrl;
+        }
+        timing.fetchMs = Date.now() - t;
+
+        // engine に無い Web API は Boa 側でも同じものを足す (B と揃えるため)
+        html = injectPolyfill(html);
+
+        // フォントだけは先に渡す。Static Assets は子から引けない
+        t = Date.now();
+        const fonts = [];
+        for (const [path, family] of FONTS) {
+          const fr = await env.ASSETS.fetch(new URL(path, request.url));
+          if (fr.ok) fonts.push({ family, bytes: new Uint8Array(await fr.arrayBuffer()) });
+        }
+        timing.fontMs = Date.now() - t;
+
+        t = Date.now();
+        const { rgba, report } = await renderInBoaWorker(env, request, {
+          html, baseUrl, width: w, height: h, fonts, generics: GENERIC_LEAD,
+          id: url.searchParams.get('fresh') ? `boa:fresh:${Math.random()}` : `boa:${w}x${h}`,
+        });
+        timing.pageScriptMs = Date.now() - t;
+
+        t = Date.now();
+        const png = await encodePNG(rgba, w, h);
+        timing.encodeMs = Date.now() - t;
+
+        return new Response(png, {
+          headers: {
+            'content-type': 'image/png',
+            'cache-control': 'no-store',
+            'x-timing': JSON.stringify(timing),
+            'x-page-script': JSON.stringify(report).replace(/[^\x20-\x7e]/g, '?'),
           },
         });
       } catch (e) {

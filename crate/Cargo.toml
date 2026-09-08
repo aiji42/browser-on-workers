@@ -30,3 +30,8 @@ wasm-bindgen = "0.2"
 [profile.release]
 opt-level = "s"
 lto = true
+codegen-units = 1
+# wasm では unwind できないので abort。
+# strip でシンボル名 (custom:name セクション、約 4MB) を落とす
+panic = "abort"
+strip = true

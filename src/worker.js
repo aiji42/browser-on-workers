@@ -14,7 +14,7 @@ import { encodePNG } from './png.js';
 // Rust 側。wasm-bindgen の glue と、その中身の Wasm。
 // wrangler.jsonc の rules で .wasm は CompiledWasm として読み込まれる
 import wasmModule from '../crate/pkg/kitesurf_clone_bg.wasm';
-import initWasm, { render_rgba } from '../crate/pkg/kitesurf_clone.js';
+import initWasm, { render_png_rgba } from '../crate/pkg/kitesurf_clone.js';
 
 // Workers にはシステムフォントが無いので、字を出すには持ち込むしかない。
 // scripts/build-fonts.mjs が Latin だけに絞った TTF を作る
@@ -92,7 +92,7 @@ export default {
       timing.fetchMs = Date.now() - t;
 
       t = Date.now();
-      const rgba = render_rgba(html, new Uint8Array(fontTtf), width, height);
+      const rgba = render_png_rgba(html, new Uint8Array(fontTtf), width, height);
       timing.renderMs = Date.now() - t;
 
       t = Date.now();

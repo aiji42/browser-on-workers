@@ -282,7 +282,7 @@ export function demoHtml(origin) {
   const ENGINES = [
     ['chromium', 'Chromium', '本物のブラウザ。Browser Run の既定'],
     ['kitesurf', 'Kitesurf', 'Cloudflare 版。Chromium を使わない'],
-    ['mine', '疑似 Kitesurf', '公開情報だけを見て組んだもの。動的 Worker の handler で Boa を動かし、解釈の途中で資源を取りに行く'],
+    ['mine', '疑似 Kitesurf', '公開情報だけを見て組んだもの。Dynamic Worker の handler で Boa を動かし、解釈の途中で資源を取りに行く'],
   ];
 
   const pane = (shot, [key, label, about]) => {

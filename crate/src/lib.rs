@@ -12,7 +12,8 @@ use blitz_dom::{BaseDocument, DocumentConfig, FontContext, StyleThreading};
 use blitz_traits::shell::{ColorScheme, Viewport};
 use kurbo::{Affine, Rect};
 use parley::fontique::{
-    Blob, Collection, CollectionOptions, FamilyId, GenericFamily, Script, SourceCache,
+    Blob, Collection, CollectionOptions, FamilyId, FontInfoOverride, GenericFamily, Script,
+    SourceCache,
 };
 use peniko::{Color, Fill};
 use wasm_bindgen::prelude::*;
@@ -114,44 +115,181 @@ const GENERIC_FAMILIES: [GenericFamily; 13] = [
     GenericFamily::FangSong,
 ];
 
-/// script ごとの fallback にも同じフォントを割り当てる。
-/// Parley は「指定された family に無い文字」を script 単位の fallback で探すので、
-/// ここが空だと日本語や記号が 0 幅になる
-const FALLBACK_SCRIPTS: [[u8; 4]; 14] = [
-    *b"Latn", *b"Cyrl", *b"Grek", *b"Hani", *b"Hira", *b"Kana", *b"Hang", *b"Arab",
-    *b"Hebr", *b"Deva", *b"Thai", *b"Zyyy", *b"Zinh", *b"Zzzz",
+/// script ごとの fallback。Parley は「指定された family に無い文字」を script 単位の
+/// fallback で探すので、ここが空だと日本語や記号が 0 幅になる。
+///
+/// 右はその script の代表文字。これを持っている family を fallback の先頭に置く
+/// (`Hani` / `Hira` / `Kana` は日本語フォントが先、`Latn` は Latin フォントが先になる)。
+/// `None` の script (共通記号など) は登録順のまま
+const FALLBACK_SCRIPTS: [([u8; 4], Option<char>); 14] = [
+    (*b"Latn", Some('a')),
+    (*b"Cyrl", Some('а')),
+    (*b"Grek", Some('α')),
+    (*b"Hani", Some('日')),
+    (*b"Hira", Some('あ')),
+    (*b"Kana", Some('ア')),
+    (*b"Hang", Some('한')),
+    (*b"Arab", Some('ا')),
+    (*b"Hebr", Some('א')),
+    (*b"Deva", Some('क')),
+    (*b"Thai", Some('ก')),
+    (*b"Zyyy", None),
+    (*b"Zinh", None),
+    (*b"Zzzz", None),
 ];
 
-/// 引数で受け取ったフォント 1 本だけで完結する `FontContext` を組む。
+/// 登録済みのフォント。`add_font` で増え、`render_png_rgba` が毎回ここから `FontContext` を組む。
+///
+/// (バイト列, family 名) の列。バイト列は `Blob` (Arc) なので `FontContext` を組み直しても
+/// フォント本体はコピーされない
+struct FontRegistry {
+    fonts: Vec<(Blob<u8>, String)>,
+    /// `fonts` から組んだ `FontContext`。`add_font` のたびに作り直す。
+    /// `render_png_rgba` はこれを clone して blitz-dom に渡す (Collection の clone は
+    /// family の表をコピーするだけで、フォントのバイト列は Arc の共有)
+    ctx: FontContext,
+}
+
+static FONTS: Mutex<Option<FontRegistry>> = Mutex::new(None);
+
+/// フォントを 1 本登録する。`render_png_rgba` より先に、フォントごとに 1 回ずつ呼ぶ。
+///
+/// - `bytes` は TTF / OTF / TTC の中身
+/// - `family` はこのフォントを入れる family の名前。**フォントファイルの中の名前は使わない**。
+///   同じ `family` で regular と bold を登録すると、1 つの family の中で weight が解決される。
+///   別の文字集合のフォント (Latin と日本語など) は必ず別の `family` にする。同じ family に
+///   入れると、weight の一致で 1 本だけが選ばれて、もう 1 本の文字が消える
+/// - 登録した順が優先順位になる。CSS の `sans-serif` などは、先に登録した family から順に
+///   文字を探す。Latin を先、日本語を後に登録すればよい (どちらも持っている文字は Latin で出る)
+/// - 戻り値は登録できた face の数。0 ならフォントとして読めなかった (何も登録されない)
+///
+/// 登録は wasm インスタンスに残る。Workers では isolate が生きている間は有効なので、
+/// 初期化のときに 1 度だけ呼ぶ (2 度呼ぶと同じ face が 2 つ入る)
+#[wasm_bindgen]
+pub fn add_font(bytes: Vec<u8>, family: &str) -> usize {
+    let blob = Blob::new(Arc::new(bytes));
+    let mut guard = FONTS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut fonts = guard.take().map(|r| r.fonts).unwrap_or_default();
+    fonts.push((blob, family.to_string()));
+    let (mut ctx, counts) = build_font_ctx(&fonts);
+    let added = counts.last().copied().unwrap_or(0);
+    if added == 0 {
+        // フォントとして読めなかったものは残さない (family 名だけが残ると紛らわしい)
+        fonts.pop();
+        ctx = build_font_ctx(&fonts).0;
+    }
+    *guard = Some(FontRegistry { fonts, ctx });
+    added
+}
+
+/// 登録したフォントを全部消す
+#[wasm_bindgen]
+pub fn clear_fonts() {
+    *FONTS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// 登録済みの family 名を登録順に返す (確認用)
+#[wasm_bindgen]
+pub fn font_families() -> Vec<String> {
+    let guard = FONTS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut names: Vec<String> = Vec::new();
+    if let Some(r) = guard.as_ref() {
+        for (_, family) in &r.fonts {
+            if !names.contains(family) {
+                names.push(family.clone());
+            }
+        }
+    }
+    names
+}
+
+/// 登録済みのフォントから `FontContext` を取り出す。何も登録されていなければ空のもの
+/// (リストの黒丸だけ描ける) を返す
+fn current_font_ctx() -> FontContext {
+    let guard = FONTS.lock().unwrap_or_else(|e| e.into_inner());
+    match guard.as_ref() {
+        Some(r) => r.ctx.clone(),
+        None => build_font_ctx(&[]).0,
+    }
+}
+
+/// 渡されたフォントだけで完結する `FontContext` を組む。
 ///
 /// wasm32 には OS のフォントが無い。fontique は `system_fonts: true` でも
 /// wasm32 ではダミーのバックエンドになるだけだが、generic family (sans-serif など) と
 /// script fallback が空のままなので、渡されたフォントを全部に結び付ける必要がある。
-fn build_font_ctx(font_ttf: &[u8]) -> FontContext {
+///
+/// 戻り値の 2 つ目は、`fonts` の各要素から登録できた face の数
+fn build_font_ctx(fonts: &[(Blob<u8>, String)]) -> (FontContext, Vec<usize>) {
     let mut collection = Collection::new(CollectionOptions {
         shared: false,
         system_fonts: false,
     });
 
-    // 呼び出し側のフォントを登録する。TTF/OTF のほか TTC (複数 family) も入る
-    let registered = collection.register_fonts(Blob::new(Arc::new(font_ttf.to_vec())), None);
-    let family_ids: Vec<FamilyId> = registered.iter().map(|(id, _)| *id).collect();
+    // family は呼び出し側の名前で作る。ファイルの中の名前 (name テーブル) は見ない。
+    // Noto Sans JP の Latin サブセットと日本語サブセットは中の名前が同じなので、
+    // それに任せると 1 つの family に混ざって weight の一致で片方しか選ばれなくなる
+    let mut family_ids: Vec<FamilyId> = Vec::new();
+    let mut counts = Vec::with_capacity(fonts.len());
+    for (blob, family) in fonts {
+        let registered = collection.register_fonts(
+            blob.clone(),
+            Some(FontInfoOverride {
+                family_name: Some(family),
+                ..Default::default()
+            }),
+        );
+        counts.push(registered.iter().map(|(_, faces)| faces.len()).sum());
+        for (id, _) in registered {
+            if !family_ids.contains(&id) {
+                family_ids.push(id);
+            }
+        }
+    }
 
+    // generic family は登録順。先に登録した family から順に文字を探す
     for generic in GENERIC_FAMILIES {
         collection.set_generic_families(generic, family_ids.iter().copied());
     }
-    for script in FALLBACK_SCRIPTS {
-        collection.set_fallbacks(Script::from_bytes(script), family_ids.iter().copied());
+
+    // script fallback は、その script の代表文字を持つ family を先頭に寄せる。
+    // 順序は安定なので、同じ側に入った family どうしは登録順のまま
+    for (script, probe) in FALLBACK_SCRIPTS {
+        let ordered: Vec<FamilyId> = match probe {
+            Some(ch) => {
+                let (covering, rest): (Vec<FamilyId>, Vec<FamilyId>) = family_ids
+                    .iter()
+                    .copied()
+                    .partition(|&id| family_covers(&mut collection, id, ch));
+                covering.into_iter().chain(rest).collect()
+            }
+            None => family_ids.clone(),
+        };
+        collection.set_fallbacks(Script::from_bytes(script), ordered.into_iter());
     }
 
     // blitz-dom は font_ctx を渡されなかったときだけ、リストの黒丸用フォントを自分で登録する。
     // 自前の font_ctx を渡すとその経路を通らないので、ここで登録しておく
     collection.register_fonts(Blob::new(Arc::new(blitz_dom::BULLET_FONT) as _), None);
 
-    FontContext {
-        collection,
-        source_cache: SourceCache::default(),
-    }
+    (
+        FontContext {
+            collection,
+            source_cache: SourceCache::default(),
+        },
+        counts,
+    )
+}
+
+/// family の中のどれかの face が `ch` のグリフを持っているか
+fn family_covers(collection: &mut Collection, id: FamilyId, ch: char) -> bool {
+    let Some(family) = collection.family(id) else { return false };
+    family.fonts().iter().any(|font| {
+        // メモリから登録したフォントなので load は Blob をそのまま返す (キャッシュ不要)
+        font.load(None)
+            .and_then(|data| font.charmap_index().charmap(data.as_ref()).and_then(|cm| cm.map(ch)))
+            .is_some_and(|g| g != 0)
+    })
 }
 
 /// HTML を `width` x `height` のビューポートに描き、RGBA8 のピクセル列を返す。
@@ -163,16 +301,21 @@ fn build_font_ctx(font_ttf: &[u8]) -> FontContext {
 /// - `base_url` はページの URL。`<link href>` や `<img src>` の相対参照を解決する起点に
 ///   なる。取得はしないが、解決できないと blitz-dom が panic するので必ず絶対 URL を渡す。
 ///   インライン HTML のように URL が無いときは空文字でよい (内部で仮の URL を敷く)
-/// - `font_ttf` はページ全体に使うフォント (TTF / OTF / TTC)。CSS の font-family が
-///   何を指していてもこのフォントに落ちる
+/// - フォントは先に `add_font` で登録しておく。CSS の font-family が何を指していても、
+///   登録したフォントの中から文字を持つものに落ちる。何も登録していないと文字は描かれない
 /// - vello_cpu の描画面は u16 なので、辺の長さは 65535 まで
 /// - サブリソース (画像・外部 CSS・web font) は取得しない。インライン `<style>` と
 ///   `style` 属性だけが効く
 #[wasm_bindgen]
-pub fn render_png_rgba(
+pub fn render_png_rgba(html: &str, base_url: &str, width: u32, height: u32) -> Vec<u8> {
+    render_with_ctx(html, base_url, current_font_ctx(), width, height)
+}
+
+/// `render_png_rgba` の本体。`FontContext` を外から渡す (テストはグローバルを触らずにこれを使う)
+fn render_with_ctx(
     html: &str,
     base_url: &str,
-    font_ttf: &[u8],
+    font_ctx: FontContext,
     width: u32,
     height: u32,
 ) -> Vec<u8> {
@@ -181,7 +324,7 @@ pub fn render_png_rgba(
         DocumentConfig {
             viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
             base_url: Some(base_url_or_fallback(base_url)),
-            font_ctx: Some(build_font_ctx(font_ttf)),
+            font_ctx: Some(font_ctx),
             // wasm32 には rayon のスレッドプールが無いので並列トラバースは使えない
             style_threading: StyleThreading::Sequential,
             ..Default::default()
@@ -214,33 +357,58 @@ pub fn render_png_rgba(
 mod tests {
     use super::*;
 
-    const FONT_PATH: &str = "/System/Library/Fonts/Supplemental/Arial.ttf";
+    /// リポジトリの fonts/ (crate からは 1 つ上)
+    const SANS: &str = "../fonts/sans-regular.ttf";
+    const SANS_BOLD: &str = "../fonts/sans-bold.ttf";
+    const JP: &str = "../fonts/jp-regular.ttf";
+
+    /// (path, family) の列から FontContext を組む。グローバルの `FONTS` は触らない
+    /// (cargo test はスレッド並列なので、テストどうしで共有すると順序に依存する)
+    fn ctx(fonts: &[(&str, &str)]) -> FontContext {
+        let fonts: Vec<(Blob<u8>, String)> = fonts
+            .iter()
+            .map(|(path, family)| {
+                let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+                (Blob::new(Arc::new(bytes)), family.to_string())
+            })
+            .collect();
+        build_font_ctx(&fonts).0
+    }
+
+    /// Latin と日本語の 2 family、Latin は regular + bold
+    fn latin_jp() -> FontContext {
+        ctx(&[(SANS, "sans"), (SANS_BOLD, "sans"), (JP, "jp")])
+    }
 
     fn px(buf: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
         let i = ((y * width + x) * 4) as usize;
         [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]
     }
 
+    /// 白でも背景色でもない画素の数 (= 文字が描かれた量の目安)
+    fn inked(buf: &[u8], w: u32, h: u32, bg: [u8; 4]) -> usize {
+        (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let p = px(buf, w, x, y);
+                p != bg && p != [255, 255, 255, 255]
+            })
+            .count()
+    }
+
     #[test]
     fn renders_background_and_text() {
-        let font = std::fs::read(FONT_PATH).expect("Arial.ttf");
         let (w, h) = (200u32, 100u32);
         let html = r#"<html><body style="margin:0;background:#ff0000">
             <p style="margin:0;font-size:40px;color:#000">Hello</p></body></html>"#;
-        let buf = render_png_rgba(html, "", &font, w, h);
+        let buf = render_with_ctx(html, "", latin_jp(), w, h);
         assert_eq!(buf.len(), (w * h * 4) as usize);
 
         // 右下は body の背景色 (赤) のまま
         assert_eq!(px(&buf, w, w - 1, h - 1), [255, 0, 0, 255]);
 
         // 文字が描かれていれば、上部の帯に赤でも白でもない画素がある
-        let non_bg = (0..h.min(50))
-            .flat_map(|y| (0..w).map(move |x| (x, y)))
-            .filter(|&(x, y)| {
-                let p = px(&buf, w, x, y);
-                p != [255, 0, 0, 255] && p != [255, 255, 255, 255]
-            })
-            .count();
+        let non_bg = inked(&buf[..(w * 50 * 4) as usize], w, 50, [255, 0, 0, 255]);
         assert!(non_bg > 50, "text should be rasterized, got {non_bg} non-bg pixels");
 
         // 目視用に RGBA をそのまま吐く (PNG 化は scripts 側)
@@ -251,9 +419,107 @@ mod tests {
 
     #[test]
     fn white_background_when_unspecified() {
-        let font = std::fs::read(FONT_PATH).expect("Arial.ttf");
-        let buf = render_png_rgba("<p>x</p>", "", &font, 50, 50);
+        let buf = render_with_ctx("<p>x</p>", "", latin_jp(), 50, 50);
         assert_eq!(px(&buf, 50, 49, 49), [255, 255, 255, 255]);
+    }
+
+    /// フォントを 1 本も登録していなくても落ちない (文字は出ない)
+    #[test]
+    fn no_fonts_does_not_panic() {
+        let buf = render_with_ctx("<p>Hello 日本語</p>", "", ctx(&[]), 100, 50);
+        assert_eq!(buf.len(), 100 * 50 * 4);
+    }
+
+    const JA_HTML: &str = r#"<html><body style="margin:0;background:#fff">
+        <p style="margin:0;font-size:40px;color:#000;font-family:sans-serif">日本語のテキスト</p>
+        </body></html>"#;
+
+    /// Latin だけだと日本語は描かれない (これが今回直したかった現象)
+    #[test]
+    fn japanese_is_blank_with_latin_only() {
+        let (w, h) = (400u32, 60u32);
+        let buf = render_with_ctx(JA_HTML, "", ctx(&[(SANS, "sans")]), w, h);
+        let n = inked(&buf, w, h, [255, 255, 255, 255]);
+        assert!(n < 20, "expected no glyphs without a JP font, got {n} inked pixels");
+    }
+
+    /// 日本語フォントを足すと描かれる
+    #[test]
+    fn japanese_renders_with_jp_font() {
+        let (w, h) = (400u32, 60u32);
+        let buf = render_with_ctx(JA_HTML, "", latin_jp(), w, h);
+        let n = inked(&buf, w, h, [255, 255, 255, 255]);
+        assert!(n > 500, "expected JP glyphs, got {n} inked pixels");
+        if let Ok(dir) = std::env::var("RENDER_DUMP_DIR") {
+            std::fs::write(format!("{dir}/japanese_{w}x{h}.rgba"), &buf).unwrap();
+        }
+    }
+
+    /// Latin と日本語が 1 行に混ざっても両方出る。CSS が知らない family 名を指しても
+    /// (script fallback に落ちても) 同じ
+    #[test]
+    fn mixed_latin_and_japanese() {
+        let (w, h) = (600u32, 60u32);
+        let html = r#"<p style="margin:0;font-size:40px;font-family:'No Such Font'">Rust と 日本語 abc</p>"#;
+        let only_latin = inked(&render_with_ctx(html, "", ctx(&[(SANS, "sans")]), w, h), w, h, [255; 4]);
+        let both = inked(&render_with_ctx(html, "", latin_jp(), w, h), w, h, [255; 4]);
+        assert!(only_latin > 200, "latin part should render: {only_latin}");
+        assert!(both > only_latin + 500, "adding JP should add glyphs: {only_latin} -> {both}");
+    }
+
+    /// bold を同じ family に登録すると、`<b>` が太くなる (塗られる画素が増える)
+    #[test]
+    fn bold_face_is_used_for_bold_text() {
+        let (w, h) = (300u32, 60u32);
+        let html = r#"<p style="margin:0;font-size:40px;font-family:sans-serif"><b>Hello World</b></p>"#;
+        let regular_only = inked(&render_with_ctx(html, "", ctx(&[(SANS, "sans")]), w, h), w, h, [255; 4]);
+        let with_bold = inked(&render_with_ctx(html, "", latin_jp(), w, h), w, h, [255; 4]);
+        assert!(
+            with_bold > regular_only + regular_only / 10,
+            "bold face should ink more pixels: regular-only {regular_only}, with bold {with_bold}"
+        );
+    }
+
+    /// script fallback の順序: Hani / Hira / Kana は jp が先、Latn は sans が先
+    #[test]
+    fn fallback_order_prefers_font_covering_the_script() {
+        let mut fc = latin_jp();
+        let sans = fc.collection.family_id("sans").unwrap();
+        let jp = fc.collection.family_id("jp").unwrap();
+        let order = |fc: &mut FontContext, s: &[u8; 4]| -> Vec<FamilyId> {
+            fc.collection.fallback_families(Script::from_bytes(*s)).collect()
+        };
+        assert_eq!(order(&mut fc, b"Latn"), vec![sans, jp]);
+        assert_eq!(order(&mut fc, b"Hani"), vec![jp, sans]);
+        assert_eq!(order(&mut fc, b"Hira"), vec![jp, sans]);
+        assert_eq!(order(&mut fc, b"Kana"), vec![jp, sans]);
+        // 代表文字を決めていない script は登録順
+        assert_eq!(order(&mut fc, b"Zyyy"), vec![sans, jp]);
+        // generic family は登録順で、全部に両方が載っている
+        for g in GENERIC_FAMILIES {
+            let fams: Vec<FamilyId> = fc.collection.generic_families(g).collect();
+            assert_eq!(fams, vec![sans, jp], "{g:?}");
+        }
+        // 同じ family 名で登録した regular と bold は 1 つの family に 2 face
+        assert_eq!(fc.collection.family(sans).unwrap().fonts().len(), 2);
+        assert_eq!(fc.collection.family(jp).unwrap().fonts().len(), 1);
+    }
+
+    /// wasm-bindgen 向けの入口 (グローバル登録) も一通り動く。
+    /// グローバルを触るのはこのテストだけにする
+    #[test]
+    fn global_registry_roundtrip() {
+        clear_fonts();
+        assert_eq!(add_font(std::fs::read(SANS).unwrap(), "sans"), 1);
+        assert_eq!(add_font(std::fs::read(SANS_BOLD).unwrap(), "sans"), 1);
+        assert_eq!(add_font(std::fs::read(JP).unwrap(), "jp"), 1);
+        // 読めないものは登録されず、family 名も残らない
+        assert_eq!(add_font(b"not a font".to_vec(), "junk"), 0);
+        assert_eq!(font_families(), vec!["sans", "jp"]);
+        let buf = render_png_rgba(JA_HTML, "", 400, 60);
+        assert!(inked(&buf, 400, 60, [255; 4]) > 500);
+        clear_fonts();
+        assert!(font_families().is_empty());
     }
 }
 
@@ -261,13 +527,22 @@ mod tests {
 mod fixture_tests {
     use super::*;
 
-    const FONT: &str = "/System/Library/Fonts/Supplemental/Arial.ttf";
+    fn fonts() -> FontContext {
+        let load = |path: &str, family: &str| {
+            (Blob::new(Arc::new(std::fs::read(path).unwrap())), family.to_string())
+        };
+        build_font_ctx(&[
+            load("../fonts/sans-regular.ttf", "sans"),
+            load("../fonts/sans-bold.ttf", "sans"),
+            load("../fonts/jp-regular.ttf", "jp"),
+        ])
+        .0
+    }
 
     /// 相対 URL の stylesheet があっても落ちない (以前は blitz-dom の `resolve_url` で panic した)。
     /// base_url が空 (インライン HTML) でも同じ
     #[test]
     fn relative_stylesheet_does_not_panic() {
-        let font = std::fs::read(FONT).unwrap();
         let html = r#"<html><head>
             <link rel="stylesheet" href="/a.css">
             <link rel="stylesheet" href="a.css">
@@ -275,7 +550,7 @@ mod fixture_tests {
             <style>@import "b.css"; body { background: url(c.png) }</style>
             </head><body><img src="d.png"><p>x</p></body></html>"#;
         for base in ["", "https://example.com/post/", "not a url", "data:text/html,x"] {
-            let buf = render_png_rgba(html, base, &font, 64, 64);
+            let buf = render_with_ctx(html, base, fonts(), 64, 64);
             assert_eq!(buf.len(), 64 * 64 * 4, "base_url = {base:?}");
         }
     }
@@ -283,10 +558,9 @@ mod fixture_tests {
     /// リポジトリに置いた実ページ (相対 stylesheet を持つもの) が全部通る
     #[test]
     fn bundled_fixtures_render() {
-        let font = std::fs::read(FONT).unwrap();
         for name in ["example", "todomvc", "aiji42", "mdn", "wikipedia", "kitesurf"] {
             let html = std::fs::read_to_string(format!("fixtures/{name}.html")).unwrap();
-            let buf = render_png_rgba(&html, "https://example.com/", &font, 320, 240);
+            let buf = render_with_ctx(&html, "https://example.com/", fonts(), 320, 240);
             assert_eq!(buf.len(), 320 * 240 * 4, "{name}");
         }
     }
@@ -295,10 +569,10 @@ mod fixture_tests {
     #[test]
     fn render_fixture() {
         let Ok(path) = std::env::var("FIXTURE") else { return };
-        let font = std::fs::read(FONT).unwrap();
         let html = std::fs::read_to_string(&path).unwrap();
+        let base = std::env::var("FIXTURE_BASE").unwrap_or_else(|_| "https://example.com/".into());
         let t = std::time::Instant::now();
-        let buf = render_png_rgba(&html, "https://example.com/", &font, 800, 600);
+        let buf = render_with_ctx(&html, &base, fonts(), 800, 600);
         eprintln!("{path}: {} bytes html -> {} bytes rgba in {:?}", html.len(), buf.len(), t.elapsed());
         if let Ok(dir) = std::env::var("RENDER_DUMP_DIR") {
             std::fs::write(format!("{dir}/fixture.rgba"), &buf).unwrap();

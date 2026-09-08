@@ -15,14 +15,29 @@ import { fetchHtml, inlineStylesheets } from './outbound.js';
 // Rust 側。wasm-bindgen の glue と、その中身の Wasm。
 // wrangler.jsonc の rules で .wasm は CompiledWasm として読み込まれる
 import wasmModule from '../crate/pkg/kitesurf_clone_bg.wasm';
-import initWasm, { render_png_rgba, last_panic } from '../crate/pkg/kitesurf_clone.js';
+import initWasm, { add_font, render_png_rgba, last_panic } from '../crate/pkg/kitesurf_clone.js';
 
-// Workers にはシステムフォントが無いので、字を出すには持ち込むしかない。
-// scripts/build-fonts.mjs が Latin だけに絞った TTF を作る
-import fontTtf from '../fonts/sans-regular.ttf';
+// Workers にはシステムフォントが 1 つも無いので、字を出すには持ち込むしかない。
+// woff2 は Brotli で圧縮されていて Workers 側でほどけないので TrueType のまま置く。
+// scripts/build-fonts.mjs が生成する
+import sansRegular from '../fonts/sans-regular.ttf';
+import sansBold from '../fonts/sans-bold.ttf';
+import jpRegular from '../fonts/jp-regular.ttf';
+
+// フォントの登録は isolate ごとに 1 度だけ。2 度呼ぶと同じ face が二重に入る。
+// 登録順が優先順位になるので、Latin を先、日本語を後にする
+// (どちらも持っている英数字は Latin 側で出る)
+const FONTS = [
+  [sansRegular, 'sans'],
+  [sansBold, 'sans'],      // 同じ family に入れると weight が解決される
+  [jpRegular, 'jp'],       // 文字集合が違うので別 family。同じにすると片方が消える
+];
 
 let ready = null;
-const ensureWasm = () => (ready ??= initWasm(wasmModule));
+const ensureWasm = () => (ready ??= (async () => {
+  await initWasm(wasmModule);
+  for (const [ttf, family] of FONTS) add_font(new Uint8Array(ttf), family);
+})());
 
 // Rust 側の panic は `RuntimeError: unreachable` として届く (wasm は unwind できない)。
 // abort の前に panic hook がメッセージを控えているので、それを取り出して差し替える。
@@ -64,7 +79,11 @@ export default {
     if (url.pathname === '/health') {
       try {
         await ensureWasm();
-        return Response.json({ ok: true, wasm: 'loaded', fontBytes: fontTtf.byteLength });
+        return Response.json({
+          ok: true,
+          wasm: 'loaded',
+          fonts: FONTS.map(([ttf, family]) => ({ family, kb: Math.round(ttf.byteLength / 1024) })),
+        });
       } catch (e) {
         return Response.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });
       }
@@ -106,7 +125,7 @@ export default {
       t = Date.now();
       // base URL を渡す。blitz-dom は <link href="/x.css"> のような相対参照を
       // これに対して解決する。無いと (base になれない data: URL が既定なので) panic する
-      const rgba = render_png_rgba(html, baseUrl, new Uint8Array(fontTtf), width, height);
+      const rgba = render_png_rgba(html, baseUrl, width, height);
       timing.renderMs = Date.now() - t;
 
       t = Date.now();

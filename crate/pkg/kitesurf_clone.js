@@ -1,4 +1,56 @@
 /**
+ * フォントを 1 本登録する。`render_png_rgba` より先に、フォントごとに 1 回ずつ呼ぶ。
+ *
+ * - `bytes` は TTF / OTF / TTC の中身
+ * - `family` はこのフォントを入れる family の名前。**フォントファイルの中の名前は使わない**。
+ *   同じ `family` で regular と bold を登録すると、1 つの family の中で weight が解決される。
+ *   別の文字集合のフォント (Latin と日本語など) は必ず別の `family` にする。同じ family に
+ *   入れると、weight の一致で 1 本だけが選ばれて、もう 1 本の文字が消える
+ * - 登録した順が優先順位になる。CSS の `sans-serif` などは、先に登録した family から順に
+ *   文字を探す。Latin を先、日本語を後に登録すればよい (どちらも持っている文字は Latin で出る)
+ * - 戻り値は登録できた face の数。0 ならフォントとして読めなかった (何も登録されない)
+ *
+ * 登録は wasm インスタンスに残る。Workers では isolate が生きている間は有効なので、
+ * 初期化のときに 1 度だけ呼ぶ (2 度呼ぶと同じ face が 2 つ入る)
+ * @param {Uint8Array} bytes
+ * @param {string} family
+ * @returns {number}
+ */
+export function add_font(bytes, family) {
+    const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_export);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(family, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.add_font(ptr0, len0, ptr1, len1);
+    return ret >>> 0;
+}
+
+/**
+ * 登録したフォントを全部消す
+ */
+export function clear_fonts() {
+    wasm.clear_fonts();
+}
+
+/**
+ * 登録済みの family 名を登録順に返す (確認用)
+ * @returns {string[]}
+ */
+export function font_families() {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.font_families(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayJsValueFromWasm0(r0, r1);
+        wasm.__wbindgen_export3(r0, r1 * 4, 4);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * wasm-bindgen の init 時に呼ばれる。panic のメッセージを外に残す。
  *
  * wasm32-unknown-unknown は unwind できない (target 自体が abort 固定で、
@@ -38,7 +90,7 @@ export function last_panic() {
         let v1;
         if (r0 !== 0) {
             v1 = getStringFromWasm0(r0, r1);
-            wasm.__wbindgen_export(r0, r1 * 1, 1);
+            wasm.__wbindgen_export3(r0, r1 * 1, 1);
         }
         return v1;
     } finally {
@@ -56,33 +108,30 @@ export function last_panic() {
  * - `base_url` はページの URL。`<link href>` や `<img src>` の相対参照を解決する起点に
  *   なる。取得はしないが、解決できないと blitz-dom が panic するので必ず絶対 URL を渡す。
  *   インライン HTML のように URL が無いときは空文字でよい (内部で仮の URL を敷く)
- * - `font_ttf` はページ全体に使うフォント (TTF / OTF / TTC)。CSS の font-family が
- *   何を指していてもこのフォントに落ちる
+ * - フォントは先に `add_font` で登録しておく。CSS の font-family が何を指していても、
+ *   登録したフォントの中から文字を持つものに落ちる。何も登録していないと文字は描かれない
  * - vello_cpu の描画面は u16 なので、辺の長さは 65535 まで
  * - サブリソース (画像・外部 CSS・web font) は取得しない。インライン `<style>` と
  *   `style` 属性だけが効く
  * @param {string} html
  * @param {string} base_url
- * @param {Uint8Array} font_ttf
  * @param {number} width
  * @param {number} height
  * @returns {Uint8Array}
  */
-export function render_png_rgba(html, base_url, font_ttf, width, height) {
+export function render_png_rgba(html, base_url, width, height) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(html, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const ptr0 = passStringToWasm0(html, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(base_url, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const ptr1 = passStringToWasm0(base_url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passArray8ToWasm0(font_ttf, wasm.__wbindgen_export2);
-        const len2 = WASM_VECTOR_LEN;
-        wasm.render_png_rgba(retptr, ptr0, len0, ptr1, len1, ptr2, len2, width, height);
+        wasm.render_png_rgba(retptr, ptr0, len0, ptr1, len1, width, height);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        var v4 = getArrayU8FromWasm0(r0, r1).slice();
-        wasm.__wbindgen_export(r0, r1 * 1, 1);
-        return v4;
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export3(r0, r1 * 1, 1);
+        return v3;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -128,6 +177,11 @@ function __wbg_get_imports() {
             const ret = typeof window === 'undefined' ? null : window;
             return isLikeNone(ret) ? 0 : addHeapObject(ret);
         },
+        __wbindgen_generic_0000000000000001: function(arg0, arg1) {
+            // Cast intrinsic for `Ref(String) -> Externref`.
+            const ret = getStringFromWasm0(arg0, arg1);
+            return addHeapObject(ret);
+        },
         __wbindgen_object_clone_ref: function(arg0) {
             const ret = getObject(arg0);
             return addHeapObject(ret);
@@ -155,6 +209,16 @@ function dropObject(idx) {
     if (idx < 1028) return;
     heap[idx] = heap_next;
     heap_next = idx;
+}
+
+function getArrayJsValueFromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    const mem = getDataViewMemory0();
+    const result = [];
+    for (let i = ptr; i < ptr + 4 * len; i += 4) {
+        result.push(takeObject(mem.getUint32(i, true)));
+    }
+    return result;
 }
 
 function getArrayU8FromWasm0(ptr, len) {

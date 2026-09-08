@@ -120,8 +120,78 @@ hook から抜けないので std の「panic 処理中」フラグが残り、2
 (`init` を呼び直しても同じものが返る)、Workers の isolate はリクエストをまたいで生きるので、
 この手は使えない。
 
+## 日本語は、フォントを足すだけでは出ない
+
+`ja.wikipedia.org` を描くと、リンクの下線と入力欄の枠だけが残って文字が全部消えた。
+埋め込んでいた `fonts/sans-regular.ttf` が Latin だけのサブセットで、日本語のグリフが無いため。
+Parley は「family にその文字が無い」と script 別の fallback を探しに行くが、fallback にも
+同じフォントしか載っていないので 0 幅で終わる。エラーは出ない。
+
+そこで `render_png_rgba` からフォント引数を外し、先に `add_font(bytes, family)` を
+フォントごとに呼んで wasm 側に登録しておく形にした。登録した family は generic family 13 個と
+script fallback 14 個の全部に載せる。
+
+```js
+add_font(new Uint8Array(sansRegular), 'sans');
+add_font(new Uint8Array(sansBold),    'sans'); // 同じ family 名なら weight で解決される
+add_font(new Uint8Array(jpRegular),   'jp');
+const rgba = render_png_rgba(html, baseUrl, width, height);
+```
+
+### 詰まった点: 3 本とも中の名前が同じ
+
+`sans-regular.ttf` / `sans-bold.ttf` / `jp-regular.ttf` は全部 Noto Sans JP から切り出したもので、
+name テーブルの family 名が 3 本とも `Noto Sans JP Thin`。fontique の `register_fonts` に
+そのまま渡すと **1 つの family に 3 face** として入る。
+
+fontique は family の中から weight で 1 face を選び、Parley はその 1 face の cmap でだけ
+文字の有無を見る。weight 400 の face が Latin 用と日本語用の 2 つあると、どちらか片方しか
+選ばれず、もう片方の文字は消える。「フォントを 2 本渡したのに片方しか効かない」という
+形で出るので、原因に気付きにくい。
+
+`FontInfoOverride { family_name }` でファイルの中の名前を無視し、呼び出し側が付けた名前で
+family を作るようにした。だから `add_font` は family 名を取る。**別の文字集合のフォントは
+必ず別の family 名にする** (同じ名前にしていいのは regular と bold のような weight 違いだけ)。
+
+### fallback の順序
+
+generic family (`sans-serif` など) は登録順。Parley は先頭の family から順に cmap を見て、
+文字を持つ最初の family を使うので、Latin を先、日本語を後に登録すれば
+両方に入っている文字 (`…` など) は Latin 側で出る。
+
+script 別 fallback (CSS が知らない family 名を指したときに落ちてくる経路) は、その script の
+代表文字 (`Latn` = `a`、`Hani` = `日`、`Hira` = `あ`、`Kana` = `ア` …) を持つ family を先頭に
+寄せる。`Hani` / `Hira` / `Kana` は日本語フォントが先、`Latn` は Latin が先になる。
+
+### 太字
+
+同じ family 名で regular と bold を登録すると、fontique が weight で face を選ぶので `<b>` は
+太字の face で出る。日本語は regular しか無いので、`<b>日本語</b>` は regular の face で描かれる。
+Latin だけのときも bold face が無ければ regular のまま。**合成の太字 (embolden) は掛からない**。
+
+### 測定 (800x600、Node 上の wasm)
+
+| ページ | HTML | Latin 1 本 | Latin + bold + 日本語 | 差 |
+| --- | --- | --- | --- | --- |
+| example.com | 559 B | 19 ms / 4.8 MB | 19 ms / 6.9 MB | +2.1 MB |
+| en.wikipedia.org | 240 KB | 105 ms / 12.1 MB | 106 ms / 14.3 MB | +2.2 MB |
+| ja.wikipedia.org | 140 KB | 84 ms / 12.1 MB (文字なし) | 96 ms / 14.3 MB | +12 ms / +2.2 MB |
+
+3 回ずつ走らせた中央値。
+
+- メモリの増分は `jp-regular.ttf` (2.1 MB) がそのまま wasm のメモリに乗った分。`add_font` は
+  Blob (Arc) で持つので、描画ごとに `FontContext` を clone してもフォント本体はコピーされない
+- `add_font` 自体は 2.1 MB のフォントで 0.4 ms。fontique は登録時に name / OS/2 / cmap の
+  位置を読むだけで、グリフは描くときに初めて触る
+- フォントが増えても、日本語の無い en.wikipedia の描画時間は変わらない。ja.wikipedia が
+  12 ms 伸びたのは、消えていた文字を実際にシェイピングして描くようになった分
+- 1280x800 の ja.wikipedia は 163 ms / 13.8 MB
+- wasm 本体のサイズは変わらない (10.2 MB、gzip 3.1 MB)。フォントは Data モジュールとして
+  別に乗るので、Worker のバンドルは 2.1 MB 増える
+
 ## まだやっていないこと
 
 - JavaScript の実行 (`<script>` は無視する)。ここに手を出すと Boa が要る
 - 画像や外部 CSS などのサブリソースの取得
-- Latin 以外の文字
+- 日本語以外の非 Latin 文字 (ハングル・ギリシャ・キリル・アラビア文字など)。フォントを
+  `add_font` で足せば出る

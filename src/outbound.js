@@ -13,8 +13,11 @@ const BROWSER_HEADERS = {
 };
 
 // 1 ページあたりの取得数と量に上限を置く。
-// ブラウザなら際限なく取りに行くが、Worker には CPU と時間の制限がある
-const MAX_STYLESHEETS = 12;
+// ブラウザなら際限なく取りに行くが、Worker には CPU と時間の制限がある。
+// 枚数の上限は低くしすぎると崩れる。MDN のトップは 20 枚あり、12 枚で切ると
+// navigation / logo / menu / footer の CSS が落ちてナビが崩れた。
+// 実際の歯止めは合計バイト数のほうに置く
+const MAX_STYLESHEETS = 40;
 const MAX_CSS_BYTES = 2 * 1024 * 1024;
 const CSS_TIMEOUT_MS = 5000;
 
@@ -27,6 +30,23 @@ export async function fetchHtml(url) {
   return { html: await res.text(), finalUrl: res.url || url };
 }
 
+// HTML の属性値は実体参照でエスケープされている。
+// 特に URL の中の & は &amp; になっているので、これを戻さないと
+// クエリ文字列が壊れる。Wikipedia の /w/load.php?lang=en&amp;modules=... が
+// まさにこれで、戻さないと中身のほぼ無い CSS が返ってくる。
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0' };
+function decodeEntities(s) {
+  return s.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (m, body) => {
+    if (body[0] === '#') {
+      const code = body[1] === 'x' || body[1] === 'X'
+        ? parseInt(body.slice(2), 16)
+        : parseInt(body.slice(1), 10);
+      return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : m;
+    }
+    return ENTITIES[body.toLowerCase()] ?? m;
+  });
+}
+
 /** <link rel="stylesheet"> の href を、種類を問わず拾う */
 function findStylesheetHrefs(html) {
   const out = [];
@@ -37,9 +57,9 @@ function findStylesheetHrefs(html) {
     // media が print だけのものは画面の描画に関係しない
     const media = tag.match(/\bmedia\s*=\s*["']([^"']*)["']/i)?.[1]?.toLowerCase();
     if (media && /\bprint\b/.test(media) && !/screen|all/.test(media)) continue;
-    const href = tag.match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1]
+    const raw = tag.match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1]
       ?? tag.match(/\bhref\s*=\s*([^"'>\s]+)/i)?.[1];
-    if (href) out.push(href);
+    if (raw) out.push(decodeEntities(raw));
   }
   return out;
 }
@@ -107,4 +127,74 @@ function rewriteImports(css, cssUrl) {
       return m;
     }
   });
+}
+
+
+// ── 画像 ─────────────────────────────────────────────────────────
+//
+// Blitz は画像のデコードは自分でやるが、バイト列の入手は NetProvider に任せている。
+// なので Worker が全部取ってきて「URL -> バイト列」の表にして渡す。
+// ネットワークは Worker 側の 1 箇所に閉じたままになる。
+
+const MAX_IMAGES = 24;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const IMAGE_TIMEOUT_MS = 5000;
+
+/** <img> の src と srcset、<source> の srcset から URL を集める */
+function findImageUrls(html, baseUrl) {
+  const urls = new Set();
+  const push = (raw) => {
+    if (!raw) return;
+    const href = decodeEntities(raw.trim());
+    if (!href || href.startsWith('data:')) return; // data: は Blitz が持っていれば読める
+    try {
+      const abs = new URL(href, baseUrl).toString();
+      if (/^https?:/.test(abs)) urls.add(abs);
+    } catch { /* 解決できない src は捨てる */ }
+  };
+
+  for (const tag of html.match(/<img\b[^>]*>/gi) ?? []) {
+    push(tag.match(/\bsrc\s*=\s*["']([^"']+)["']/i)?.[1]);
+    // srcset は "url 2x, url 1x" の形。最初の 1 つだけ拾う
+    const srcset = tag.match(/\bsrcset\s*=\s*["']([^"']+)["']/i)?.[1];
+    if (srcset) push(srcset.split(',')[0]?.trim().split(/\s+/)[0]);
+  }
+  return [...urls].slice(0, MAX_IMAGES);
+}
+
+/**
+ * ページの画像を取ってきて、URL とバイト列の組で返す。
+ * 取れなかったものは黙って飛ばす。
+ */
+export async function fetchImages(html, baseUrl) {
+  const urls = findImageUrls(html, baseUrl);
+  if (!urls.length) return { images: [], skipped: 0, bytes: 0 };
+
+  const got = await Promise.all(urls.map(async (url) => {
+    try {
+      const res = await fetch(url, {
+        headers: { ...BROWSER_HEADERS, accept: 'image/avif,image/webp,image/*,*/*;q=0.8', referer: baseUrl },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
+      });
+      if (!res.ok) return null;
+      const type = res.headers.get('content-type') ?? '';
+      // SVG は usvg 側で扱うので、ここではラスタ画像だけ持ち込む
+      if (!/^image\//.test(type)) return null;
+      return { url, bytes: new Uint8Array(await res.arrayBuffer()), type };
+    } catch {
+      return null;
+    }
+  }));
+
+  const images = [];
+  let bytes = 0;
+  let skipped = 0;
+  for (const g of got) {
+    if (!g) { skipped++; continue; }
+    if (bytes + g.bytes.length > MAX_IMAGE_BYTES) { skipped++; continue; }
+    bytes += g.bytes.length;
+    images.push(g);
+  }
+  return { images, skipped, bytes };
 }

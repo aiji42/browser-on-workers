@@ -1,6 +1,6 @@
 // scripts/build-shots.mjs が生成する。手で編集しない
 export default {
-  "capturedAt": "2026-09-08T07:09:12.800Z",
+  "capturedAt": "2026-09-08T07:44:37.191Z",
   "shots": [
     {
       "slug": "ja-wikipedia-org",
@@ -12,27 +12,28 @@ export default {
       "engines": {
         "chromium": {
           "file": "/shots/ja-wikipedia-org.chromium.png",
-          "kb": 390,
-          "ms": 1953,
-          "billedMs": 1038,
+          "kb": 202,
+          "ms": 2380,
+          "billedMs": 1266,
           "timing": null
         },
         "kitesurf": {
           "file": "/shots/ja-wikipedia-org.kitesurf.png",
           "kb": 390,
-          "ms": 5742,
-          "billedMs": 5341,
+          "ms": 6353,
+          "billedMs": 5542,
           "timing": null
         },
         "mine": {
           "file": "/shots/ja-wikipedia-org.mine.png",
           "kb": 359,
-          "ms": 2700,
+          "ms": 5103,
           "billedMs": null,
           "timing": {
             "js": true,
-            "fetchMs": 28,
-            "subresourceMs": 52,
+            "fetchMs": 449,
+            "polyfill": true,
+            "subresourceMs": 763,
             "css": {
               "fetched": 3,
               "skipped": 0,
@@ -46,7 +47,7 @@ export default {
               "decodedBytes": 1299560
             },
             "renderMs": 0,
-            "recoverFetchMs": 466,
+            "recoverFetchMs": 1031,
             "passes": 2,
             "recovered": [
               {
@@ -73,26 +74,27 @@ export default {
         "chromium": {
           "file": "/shots/developer-mozilla-org.chromium.png",
           "kb": 54,
-          "ms": 2324,
-          "billedMs": 1400,
+          "ms": 1059,
+          "billedMs": 743,
           "timing": null
         },
         "kitesurf": {
           "file": "/shots/developer-mozilla-org.kitesurf.png",
           "kb": 66,
-          "ms": 6761,
-          "billedMs": 5718,
+          "ms": 4882,
+          "billedMs": 3985,
           "timing": null
         },
         "mine": {
           "file": "/shots/developer-mozilla-org.mine.png",
           "kb": 57,
-          "ms": 1094,
+          "ms": 1732,
           "billedMs": null,
           "timing": {
             "js": true,
-            "fetchMs": 182,
-            "subresourceMs": 20,
+            "fetchMs": 45,
+            "polyfill": true,
+            "subresourceMs": 208,
             "css": {
               "fetched": 18,
               "skipped": 0,
@@ -104,7 +106,7 @@ export default {
               "bytes": 0
             },
             "renderMs": 0,
-            "recoverFetchMs": 41,
+            "recoverFetchMs": 430,
             "passes": 2,
             "recovered": [
               {
@@ -114,7 +116,7 @@ export default {
                 "tooBig": 0
               }
             ],
-            "jsErrors": 1,
+            "jsErrors": 0,
             "encodeMs": 0
           }
         }
@@ -126,31 +128,32 @@ export default {
       "w": 1000,
       "h": 780,
       "title": "react.dev",
-      "note": "ページの JS を動かすと React のハイドレーションが本文を消すので、JS を切って描き直したもの",
+      "note": "SSG。ページの JS を動かすと React のハイドレーションが本文を消すので、JS を切って描き直したもの",
       "engines": {
         "chromium": {
           "file": "/shots/react-dev.chromium.png",
           "kb": 153,
-          "ms": 4517,
-          "billedMs": 3625,
+          "ms": 1595,
+          "billedMs": 733,
           "timing": null
         },
         "kitesurf": {
           "file": "/shots/react-dev.kitesurf.png",
           "kb": 84,
-          "ms": 4190,
-          "billedMs": 3758,
+          "ms": 7806,
+          "billedMs": 6715,
           "timing": null
         },
         "mine": {
           "file": "/shots/react-dev.mine.png",
           "kb": 67,
-          "ms": 6975,
+          "ms": 9902,
           "billedMs": null,
           "timing": {
             "js": true,
-            "fetchMs": 91,
-            "subresourceMs": 171,
+            "fetchMs": 199,
+            "polyfill": true,
+            "subresourceMs": 497,
             "css": {
               "fetched": 1,
               "skipped": 0,
@@ -164,7 +167,7 @@ export default {
               "decodedBytes": 1133824
             },
             "renderMs": 0,
-            "recoverFetchMs": 300,
+            "recoverFetchMs": 685,
             "passes": 2,
             "recovered": [
               {
@@ -176,6 +179,65 @@ export default {
             ],
             "blankWithJs": true,
             "usedNoJs": true,
+            "jsErrors": 0,
+            "encodeMs": 0
+          }
+        }
+      }
+    },
+    {
+      "slug": "todomvc-com",
+      "url": "https://todomvc.com/examples/react/dist/",
+      "w": 1000,
+      "h": 780,
+      "title": "todomvc.com (React の SPA)",
+      "note": "HTML の中は空。見えているものは全部、ページの JS が描いたもの",
+      "engines": {
+        "chromium": {
+          "file": "/shots/todomvc-com.chromium.png",
+          "kb": 22,
+          "ms": 1829,
+          "billedMs": 1329,
+          "timing": null
+        },
+        "kitesurf": {
+          "file": "/shots/todomvc-com.kitesurf.png",
+          "kb": 24,
+          "ms": 2635,
+          "billedMs": 2411,
+          "timing": null
+        },
+        "mine": {
+          "file": "/shots/todomvc-com.mine.png",
+          "kb": 20,
+          "ms": 2030,
+          "billedMs": null,
+          "timing": {
+            "js": true,
+            "fetchMs": 90,
+            "polyfill": true,
+            "subresourceMs": 8,
+            "css": {
+              "fetched": 1,
+              "skipped": 0,
+              "bytes": 7400
+            },
+            "img": {
+              "fetched": 0,
+              "skipped": 0,
+              "bytes": 0
+            },
+            "renderMs": 0,
+            "recoverFetchMs": 20,
+            "passes": 2,
+            "recovered": [
+              {
+                "asked": 2,
+                "got": 2,
+                "bytes": 240666,
+                "tooBig": 0
+              }
+            ],
             "jsErrors": 1,
             "encodeMs": 0
           }

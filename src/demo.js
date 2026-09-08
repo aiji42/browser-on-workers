@@ -251,7 +251,12 @@ export const DEMO_SHOTS = [
   [
     'https://react.dev/', 1000, 780,
     'react.dev',
-    'ページの JS を動かすと React のハイドレーションが本文を消すので、JS を切って描き直したもの',
+    'SSG。ページの JS を動かすと React のハイドレーションが本文を消すので、JS を切って描き直したもの',
+  ],
+  [
+    'https://todomvc.com/examples/react/dist/', 1000, 780,
+    'todomvc.com (React の SPA)',
+    'HTML の中は空。見えているものは全部、ページの JS が描いたもの',
   ],
 ];
 
@@ -364,6 +369,9 @@ ${SHOTS.shots.map(trio).join('\n')}
   <li>フォントに入れた文字しか出ません。いまは Latin と、ひらがな・カタカナ・漢字</li>
   <li>ページの JavaScript には実行上限があります。<code>while (true)</code> はループ 50 万回で止まります。Boa には実行を中断する仕組みが無いので、上限を自分で積んでいます</li>
   <li>展開すると大きすぎる画像は飛ばします。1 枚で 87 MB になる画像があり、isolate のメモリに載りません</li>
+  <li><b>SSR / SSG のページで React のハイドレーションが通りません。</b> 描き直しに落ちて本文が消えるので、そのときは JS を切って描き直しています。SPA (クライアントで描く作り) は動きます</li>
+  <li>Web Workers と WebAssembly をページに出していません。<a href="https://regex101.com/">regex101</a> はそれを見て自分で「非対応」と表示します (<code>Worker=false, Promise=true, WASM=false</code>)</li>
+  <li>ページからの <code>fetch()</code> は必ず失敗します。データを取ってから描くページは空のままになります</li>
   <li>動くもの (アニメーション、動画、WebGL) は扱いません</li>
   <li>レイアウトが返ってこないページがまだあります</li>
 </ul>

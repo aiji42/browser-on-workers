@@ -260,43 +260,28 @@ export const DEMO_SHOTS = [
   ],
 ];
 
-/**
- * x-timing から 1 行の説明を作る。
- *
- * 構成 A (`/ashot`) は「資源 N 本 · M 周」、旧来の `/shot` は
- * 「CSS n 枚 · 画像 m 枚」を出す。どちらの形でも読めるようにしておく
- */
-function engineNote(t) {
-  const bits = [];
-  if (t.resources != null) bits.push(`資源 ${t.resources} 本`);
-  else if (t.css) bits.push(`CSS ${t.css.fetched} 枚`, `画像 ${t.img?.fetched ?? 0} 枚`);
-  if (t.passes) bits.push(`${t.passes} 周`);
-  if (t.usedNoJs) bits.push('JS を切って描き直した');
-  else if (t.jsErrors) bits.push(`JS のエラー ${t.jsErrors} 件`);
-  return bits.join(' · ');
-}
-
 /** デモのトップページ。origin は自分の URL (自己参照の画像に使う) */
 export function demoHtml(origin) {
   // 3 つのブラウザで同時刻に撮った 1 組。scripts/build-shots.mjs が作る
+  // ラベルだけで足りる。何がどれかは名前で分かる
   const ENGINES = [
-    ['chromium', 'Chromium', '本物のブラウザ。Browser Run の既定'],
-    ['kitesurf', 'Kitesurf', 'Cloudflare 版。Chromium を使わない'],
-    ['mine', '疑似 Kitesurf', '公開情報だけを見て組んだもの。Dynamic Worker の handler で Boa を動かし、解釈の途中で資源を取りに行く'],
+    ['chromium', 'Chromium'],
+    ['kitesurf', 'Kitesurf'],
+    ['mine', '疑似 Kitesurf'],
   ];
 
-  const pane = (shot, [key, label, about]) => {
+  const pane = (shot, [key, label]) => {
     const e = shot.engines[key];
     if (!e) return '';
-    const t = e.timing ?? null;
-    const num = e.billedMs != null
-      ? `課金 ${e.billedMs} ms`
-      : (t ? engineNote(t) : '');
+    // 3 者を同じ計測で並べる。課金メーターは Browser Run しか返さないので、
+    // 揃うのは「撮影を頼んでから絵が返るまで」の時間になる。
+    // 3 枚は並列に撮っているので、回線の条件も同じ
+    const num = e.ms != null ? `${e.ms} ms` : '';
     return `<figure class="shot ${key}">
   <div class="bar"><span class="dot"></span>${label}<span class="sp">${e.kb} KB</span></div>
   <div class="body"><a href="${e.file}"><img src="${e.file}" width="${shot.w}" height="${shot.h}"
        alt="${shot.title} を ${label} が描いた画像"></a></div>
-  <figcaption>${about}<br><span class="num">${num}</span></figcaption>
+  <figcaption><span class="num">${num}</span></figcaption>
 </figure>`;
   };
 
@@ -325,7 +310,7 @@ export function demoHtml(origin) {
 
 <h2>3 つのブラウザで同じページを撮る</h2>
 <p>左が本物のブラウザ (Chromium)、中央が Cloudflare の <b>本物の Kitesurf</b>、右が<b>この記事で組んだ疑似 Kitesurf</b>です。3 枚は<b>同じ時刻に撮っています</b> — ja.wikipedia のトップページは日ごとに変わるので、別々に撮るとエンジンの違いとページの違いが混ざります。画像を押すと元の大きさで開きます。</p>
-<p class="hint">撮影 ${new Date(SHOTS.capturedAt).toISOString().replace('T', ' ').slice(0, 16)} UTC。下の「自分で試す」だけはその場で描きます。</p>
+<p class="hint">撮影 ${new Date(SHOTS.capturedAt).toISOString().replace('T', ' ').slice(0, 16)} UTC。3 枚は並列に撮っているので、同じ時刻・同じ回線です。数字は撮影を頼んでから絵が返るまでの時間で、CPU 時間ではありません。下の「自分で試す」だけはその場で描きます。</p>
 
 ${SHOTS.shots.map(trio).join('\n')}
 

@@ -65,21 +65,25 @@ function findStylesheetHrefs(html) {
 }
 
 /**
- * 外部 CSS を取ってきて、HTML の中に <style> として差し込む。
- * 取れなかったものは黙って飛ばす (1 枚のスタイルシートで落としたくない)。
+ * 外部 CSS を取ってきて、URL とバイト列の組で返す。
+ *
+ * HTML に `<style>` として差し込む方式はやめた。差し込むと CSS の中の相対 `url()` が
+ * ページの URL を基準に解決されてしまう。本来はスタイルシート自身の URL が基準なので、
+ * `../img/x.png` のような参照がずれる。
+ * 表に入れて Blitz に `<link>` から要求させれば、基準は正しくなる。
  */
-export async function inlineStylesheets(html, baseUrl) {
+export async function fetchStylesheets(html, baseUrl) {
   const hrefs = findStylesheetHrefs(html).slice(0, MAX_STYLESHEETS);
-  if (!hrefs.length) return { html, fetched: 0, skipped: 0, cssBytes: 0 };
+  if (!hrefs.length) return { sheets: [], skipped: 0, bytes: 0 };
 
-  const results = await Promise.all(hrefs.map(async (href) => {
+  const got = await Promise.all(hrefs.map(async (href) => {
     let abs;
     try {
       abs = new URL(href, baseUrl).toString();
     } catch {
-      return null; // 解決できない href は捨てる
+      return null;
     }
-    if (!/^https?:/.test(abs)) return null; // data: や blob: は今回扱わない
+    if (!/^https?:/.test(abs)) return null; // data: は Rust 側が解く
     try {
       const res = await fetch(abs, {
         headers: { ...BROWSER_HEADERS, accept: 'text/css,*/*;q=0.1', referer: baseUrl },
@@ -87,47 +91,24 @@ export async function inlineStylesheets(html, baseUrl) {
         signal: AbortSignal.timeout(CSS_TIMEOUT_MS),
       });
       if (!res.ok) return null;
-      const text = await res.text();
-      // CSS の中の @import と url() の相対参照は、取得元を基準に直す必要がある。
-      // ここでは @import だけ絶対 URL に書き換える (url() は画像なので今回は使わない)
-      return rewriteImports(text, abs);
+      return { url: abs, bytes: new Uint8Array(await res.arrayBuffer()) };
     } catch {
       return null;
     }
   }));
 
-  const css = [];
+  const sheets = [];
   let bytes = 0;
   let skipped = 0;
-  for (const text of results) {
-    if (text == null) { skipped++; continue; }
-    if (bytes + text.length > MAX_CSS_BYTES) { skipped++; continue; }
-    bytes += text.length;
-    css.push(text);
+  for (const g of got) {
+    if (!g) { skipped++; continue; }
+    if (bytes + g.bytes.length > MAX_CSS_BYTES) { skipped++; continue; }
+    bytes += g.bytes.length;
+    sheets.push(g);
   }
-  if (!css.length) return { html, fetched: 0, skipped, cssBytes: 0 };
-
-  // </head> の直前に入れる。無ければ先頭に付ける。
-  // 元の <link> より後ろに置くので、カスケードの順序は元と同じになる
-  const block = `<style data-injected-by="browser-on-workers">\n${css.join('\n')}\n</style>`;
-  const idx = html.search(/<\/head\s*>/i);
-  const merged = idx >= 0
-    ? html.slice(0, idx) + block + html.slice(idx)
-    : block + html;
-
-  return { html: merged, fetched: css.length, skipped, cssBytes: bytes };
+  return { sheets, skipped, bytes };
 }
 
-/** CSS の中の @import を絶対 URL に直す。中身は取りに行かない */
-function rewriteImports(css, cssUrl) {
-  return css.replace(/@import\s+(?:url\(\s*)?["']?([^"')\s;]+)["']?\s*\)?/gi, (m, href) => {
-    try {
-      return m.replace(href, new URL(href, cssUrl).toString());
-    } catch {
-      return m;
-    }
-  });
-}
 
 
 // ── 画像 ─────────────────────────────────────────────────────────
@@ -153,11 +134,10 @@ function findImageUrls(html, baseUrl) {
     } catch { /* 解決できない src は捨てる */ }
   };
 
+  // src だけを見る。blitz-dom は srcset を読まないので、拾っても要求されず
+  // 取得の枠を無駄に使うだけになる
   for (const tag of html.match(/<img\b[^>]*>/gi) ?? []) {
     push(tag.match(/\bsrc\s*=\s*["']([^"']+)["']/i)?.[1]);
-    // srcset は "url 2x, url 1x" の形。最初の 1 つだけ拾う
-    const srcset = tag.match(/\bsrcset\s*=\s*["']([^"']+)["']/i)?.[1];
-    if (srcset) push(srcset.split(',')[0]?.trim().split(/\s+/)[0]);
   }
   return [...urls].slice(0, MAX_IMAGES);
 }
@@ -173,7 +153,9 @@ export async function fetchImages(html, baseUrl) {
   const got = await Promise.all(urls.map(async (url) => {
     try {
       const res = await fetch(url, {
-        headers: { ...BROWSER_HEADERS, accept: 'image/avif,image/webp,image/*,*/*;q=0.8', referer: baseUrl },
+        headers: { ...BROWSER_HEADERS, // AVIF は外す。image クレートの AVIF 復号は libdav1d (C) 依存で wasm32 では作れず、
+        // 受け取っても 0 画素になる
+        accept: 'image/webp,image/png,image/jpeg,image/gif,image/svg+xml,image/*;q=0.8', referer: baseUrl },
         redirect: 'follow',
         signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
       });

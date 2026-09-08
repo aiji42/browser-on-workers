@@ -10,7 +10,7 @@
 // Chromium は使わない。ブラウザの処理は全部この isolate の中で終わる。
 
 import { encodePNG } from './png.js';
-import { fetchHtml, inlineStylesheets, fetchImages } from './outbound.js';
+import { fetchHtml, fetchStylesheets, fetchImages } from './outbound.js';
 
 // Rust 側。wasm-bindgen の glue と、その中身の Wasm。
 // wrangler.jsonc の rules で .wasm は CompiledWasm として読み込まれる
@@ -116,21 +116,23 @@ export default {
       }
       timing.fetchMs = Date.now() - t;
 
-      // Blitz はサブリソースを取りに行かない。外部 CSS は Worker が取ってきて
-      // <style> として差し込む。これが無いと実ページは素の文書として描かれる
-      t = Date.now();
-      const sheets = await inlineStylesheets(html, baseUrl || 'https://inline.invalid/');
-      html = sheets.html;
-      timing.cssMs = Date.now() - t;
-      timing.css = { fetched: sheets.fetched, skipped: sheets.skipped, bytes: sheets.cssBytes };
-
-      // 画像は Worker が取ってきて表に入れる。Rust 側は通信しない。
+      // Blitz はサブリソースを自分で取りに行かないので、Worker が取ってきて
+      // 「URL -> バイト列」の表に入れる。Blitz は <link> や <img> から
+      // その URL を要求し、表から受け取る。通信は Worker 側の 1 箇所だけ。
+      //
       // isolate はリクエストをまたいで生きるので、前のページの分を先に捨てる
-      t = Date.now();
       clear_resources();
-      const imgs = await fetchImages(html, baseUrl || 'https://inline.invalid/');
+      const base = baseUrl || 'https://inline.invalid/';
+
+      t = Date.now();
+      const [sheets, imgs] = await Promise.all([
+        fetchStylesheets(html, base),
+        fetchImages(html, base),
+      ]);
+      for (const sheet of sheets.sheets) add_resource(sheet.url, sheet.bytes);
       for (const img of imgs.images) add_resource(img.url, img.bytes);
-      timing.imgMs = Date.now() - t;
+      timing.subresourceMs = Date.now() - t;
+      timing.css = { fetched: sheets.sheets.length, skipped: sheets.skipped, bytes: sheets.bytes };
       timing.img = { fetched: imgs.images.length, skipped: imgs.skipped, bytes: imgs.bytes };
 
       t = Date.now();

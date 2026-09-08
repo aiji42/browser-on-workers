@@ -50,8 +50,14 @@ CSS のパースとカスケードは OS に依存しない純粋な計算なの
 
 Workers にはフォントが 1 つも無い。字を出すにはフォントファイルを埋め込む。
 
-**woff2 は使えない。** Brotli で圧縮されていて、Workers 側でほどく手段が無い
-(`DecompressionStream` は gzip と deflate だけ)。なので TrueType のまま置く。
+**woff2 は JS 側ではほどけない。** Brotli で圧縮されていて、Workers の
+`DecompressionStream` は gzip と deflate しか扱えない。なので埋め込むフォントは
+TrueType のまま置く。
+
+ただし **Rust 側なら woff2 をほどける。** blitz-dom の `woff` feature が既定で入っていて、
+`wuff` が Brotli を扱う。`@font-face { src: url(...woff2) }` を資源の表から返すと、
+`add_font` を 1 本も呼んでいなくても文字が描かれた。つまりページ自身の web font を
+使わせることもできる。埋め込みフォントが要るのは、web font を持たないページのため。
 
 全部入れると重いので、`scripts/build-fonts.mjs` で Latin と記号だけに絞る。
 リポジトリに既にある `subset-font` に `targetFormat: 'truetype'` を渡すと

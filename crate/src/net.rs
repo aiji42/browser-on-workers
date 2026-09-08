@@ -21,6 +21,26 @@
 //! なので表に無い URL には**空のバイト列で応答する**。空の CSS は中身の無い
 //! stylesheet として読まれ、画像はデコードに失敗して「読めなかった画像」になり、
 //! フォントは形式不明として捨てられる。どれも描画は続く。
+//!
+//! # 取りこぼした URL を数える (2 パス描画)
+//!
+//! CSS の中から参照される画像 (`background-image: url(...)`) は、どのセレクタが
+//! 当たるかがカスケードとレイアウトの後にしか決まらないので、HTML を先に走査する
+//! やり方では集まらない。そこで**要求されたが表に無かった URL を控えておく**。
+//!
+//! `render_png_rgba` は描き終わりにその記録を `missed_resources` に置く。JS は
+//! それを取って fetch し、`add_resource` で表に足して**もう 1 度描く**。
+//! 描画のたびに `BaseDocument` を作り直すので、2 回目は同じ URL をもう一度要求する
+//! (blitz-dom は「取得に失敗した URL」をプロセスに残さない。記録はどれも document の中)。
+//!
+//! ```js
+//! clear_resources();
+//! render_png_rgba(html, base, w, h);            // 1 回目: 取りこぼしを数えるために描く
+//! for (const url of missed_resources()) {
+//!   add_resource(url, new Uint8Array(await (await fetch(url)).arrayBuffer()));
+//! }
+//! const rgba = render_png_rgba(html, base, w, h); // 2 回目: これが絵になる
+//! ```
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -31,6 +51,15 @@ use wasm_bindgen::prelude::*;
 
 /// JS が `add_resource` で溜めた表。キーは正規化した絶対 URL (fragment を落としたもの)
 static RESOURCES: Mutex<Option<HashMap<String, Bytes>>> = Mutex::new(None);
+
+/// **直前の** `render_png_rgba` が取りこぼした URL。`missed_resources` で JS が読む。
+/// 描画ごとに置き換わる (溜まらない) ので、2 回目の描画のあとに空なら全部埋まったということ
+static MISSES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// グローバル (フォントと資源の表) を触るテストの直列化。`lib.rs` 側のテストからも取るので
+/// tests module の外に置く
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) static GLOBAL: Mutex<()> = Mutex::new(());
 
 /// 表を引く `NetProvider`。バイト列は手元にあるので、`fetch` の中で handler を
 /// そのまま呼んで同期的に解決する。応答は blitz-dom の mpsc に積まれるだけなので、
@@ -44,25 +73,31 @@ pub struct TableNetProvider {
     table: Arc<HashMap<String, Bytes>>,
     /// `fetch` が呼ばれた回数。取得が増えなくなったら描画ループを止める目印に使う
     fetches: AtomicUsize,
+    /// 要求されたが表に無かった URL。要求された順、重複なし。
+    /// JS がこれを取得して `add_resource` で足し、もう 1 度描く
+    misses: Mutex<Vec<String>>,
 }
 
 impl TableNetProvider {
+    /// 表を渡して作る
+    fn with_table(table: HashMap<String, Bytes>) -> Arc<Self> {
+        Arc::new(Self {
+            table: Arc::new(table),
+            fetches: AtomicUsize::new(0),
+            misses: Mutex::new(Vec::new()),
+        })
+    }
+
     /// いまの表を写して作る
     pub fn current() -> Arc<Self> {
         let guard = RESOURCES.lock().unwrap_or_else(|e| e.into_inner());
         let table = guard.as_ref().cloned().unwrap_or_default();
-        Arc::new(Self {
-            table: Arc::new(table),
-            fetches: AtomicUsize::new(0),
-        })
+        Self::with_table(table)
     }
 
     /// 表が空のもの (資源を渡されなかったとき用)
     pub fn empty() -> Arc<Self> {
-        Arc::new(Self {
-            table: Arc::new(HashMap::new()),
-            fetches: AtomicUsize::new(0),
-        })
+        Self::with_table(HashMap::new())
     }
 
     /// `fetch` が呼ばれた回数
@@ -70,7 +105,12 @@ impl TableNetProvider {
         self.fetches.load(Ordering::Relaxed)
     }
 
-    /// 表 (と data: URL) から中身を引く。無ければ `None`
+    /// 表から引けなかった URL。要求された順、重複なし
+    pub fn misses(&self) -> Vec<String> {
+        self.misses.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// 表 (と data: URL) から中身を引く。無ければ `None` を返し、その URL を控える
     fn lookup(&self, url: &str) -> Option<Bytes> {
         // data: URL は「通信」ではないので、ここで解いてしまう。JS 側に渡す必要は無い
         if url.starts_with("data:") {
@@ -78,7 +118,35 @@ impl TableNetProvider {
             let (bytes, _) = data.decode_to_vec().ok()?;
             return Some(Bytes::from(bytes));
         }
-        self.table.get(strip_fragment(url)).cloned()
+        let key = strip_fragment(url);
+        match self.table.get(key) {
+            Some(bytes) => Some(bytes.clone()),
+            None => {
+                self.record_miss(key);
+                None
+            }
+        }
+    }
+
+    /// 取りこぼしを控える。
+    ///
+    /// - 控えるのは**表と同じ鍵** (fragment を落としたもの)。SVG sprite の
+    ///   `icons.svg#a` と `icons.svg#b` は 1 本の取得にまとまり、そのまま
+    ///   `add_resource` の鍵として戻ってくる
+    /// - JS が `fetch` に渡せるものだけ。scheme が http(s) でないものは控えない
+    ///   (`data:` はここに来ないが、`base_url` を渡さなかったときの
+    ///   `https://inline.invalid/...` のように、取りに行っても無駄なものはある)
+    /// - lock はこの関数の中で閉じる。`fetch` は stylesheet の `@import` や
+    ///   `@font-face` のために**自分自身を再入する**ので、handler を呼ぶ間 lock を
+    ///   持っていると自分と競合して固まる
+    fn record_miss(&self, key: &str) {
+        if !(key.starts_with("http://") || key.starts_with("https://")) {
+            return;
+        }
+        let mut misses = self.misses.lock().unwrap_or_else(|e| e.into_inner());
+        if !misses.iter().any(|u| u == key) {
+            misses.push(key.to_string());
+        }
     }
 }
 
@@ -138,10 +206,33 @@ pub fn add_resource(url: &str, bytes: Vec<u8>) -> String {
 }
 
 /// 登録した資源を全部捨てる。ページごとに呼ぶ
-/// (Workers の isolate はリクエストをまたいで生きるので、呼ばないと前のページの画像が残る)
+/// (Workers の isolate はリクエストをまたいで生きるので、呼ばないと前のページの画像が残る)。
+/// `missed_resources` の記録も一緒に捨てる
 #[wasm_bindgen]
 pub fn clear_resources() {
     *RESOURCES.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    MISSES.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// **直前の `render_png_rgba` が要求したのに表に無かった** URL。
+///
+/// これを fetch して `add_resource` で足し、もう 1 度描くと、CSS の中から
+/// 参照される画像 (`background-image`) や `@import` した CSS、`@font-face` の
+/// web font まで絵に入る。HTML を走査するだけでは集まらないもの。
+///
+/// - `fetch` にそのまま渡せる絶対 URL (http / https)。要求された順、重複なし
+/// - `data:` は Rust 側で解くので入らない
+/// - 描画のたびに置き換わる。空になったら足すものは無い
+/// - `render_png_rgba` を通らない描画 (native のテスト) では更新されない
+#[wasm_bindgen]
+pub fn missed_resources() -> Vec<String> {
+    MISSES.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// 1 回の描画で取りこぼした URL を `missed_resources` に置く。
+/// `render_png_rgba` が描き終わりに呼ぶ
+pub(crate) fn publish_misses(net: &TableNetProvider) {
+    *MISSES.lock().unwrap_or_else(|e| e.into_inner()) = net.misses();
 }
 
 /// 登録済みの URL (確認用。順序は決まらない)

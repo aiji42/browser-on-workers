@@ -10,8 +10,10 @@
 // Chromium は使わない。ブラウザの処理は全部この isolate の中で終わる。
 
 import { encodePNG } from './png.js';
-import { demoHtml, cardHtml, jsDemoHtml } from './demo.js';
+import { demoHtml, cardHtml, jsDemoHtml, DEMO_SHOTS } from './demo.js';
 import { fetchHtml, fetchStylesheets, fetchImages, fetchResources } from './outbound.js';
+
+export { RateLimiter } from './ratelimit.js';
 
 // Rust 側。wasm-bindgen の glue と、その中身の Wasm。
 // wrangler.jsonc の rules で .wasm は CompiledWasm として読み込まれる
@@ -88,6 +90,35 @@ const describeError = (e) => {
 // 取りこぼしを回収して描き直す回数の上限。@import が段になっていると 2 周では終わらない
 const MAX_PASSES = 3;
 
+// 描くのは 1 リクエストで 0.1〜2 秒の CPU を使う仕事なので、公開したままにするなら
+// 数を絞る。送信元 IP ごとに Durable Object を 1 つ持って、そこで数える
+// (組み込みの Rate Limiting binding は効かなかった。src/ratelimit.js を参照)。
+// 10 秒で 4 回、60 秒で 12 回まで。
+//
+// バケットは 2 つ。
+//
+// - shot: 訪問者が URL を指定して撮る経路。1 枚 0.1〜2 秒の CPU を使い、
+//   外向きの fetch もするので厳しくする
+// - demo: このサイトが自分で貼っている決まった絵。中身が固定で、
+//   edge にキャッシュされるので緩くていい (トップページ 1 回の表示で 4 枚使う)
+const BUCKETS = {
+  shot: [[10, 4], [60, 12]],
+  demo: [[10, 12], [60, 40]],
+};
+
+// 返すのは「断るなら retry-after の秒数、通すなら null」
+async function overLimit(env, request, bucket) {
+  if (!env.RATE) return null;   // binding が無いときは通す
+  const key = request.headers.get('cf-connecting-ip') ?? 'unknown';
+  const stub = env.RATE.get(env.RATE.idFromName(`${bucket}:${key}`));
+  const q = BUCKETS[bucket].map(([sec, limit]) => `w=${sec},${limit}`).join('&');
+  const verdict = await stub.fetch(`https://rate.invalid/?${q}`).then((r) => r.json());
+  return verdict.ok ? null : verdict.retryAfter;
+}
+
+// 渡せる HTML の大きさ。これ以上は描く前に断る
+const MAX_INLINE_HTML = 512 * 1024;
+
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 800;
 
@@ -115,6 +146,19 @@ export default {
       headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
     });
 
+    const tooMany = (retryAfter) => new Response(
+      'リクエストが多すぎます。少し待ってからもう一度どうぞ。\n' +
+      '(1 枚描くのに 0.1〜2 秒の CPU を使うので、10 秒で 4 枚・60 秒で 12 枚までに\n' +
+      'しています)\n',
+      {
+        status: 429,
+        headers: {
+          'content-type': 'text/plain; charset=utf-8',
+          'retry-after': String(retryAfter),
+        },
+      },
+    );
+
     // デモ。このブラウザで自分自身を描けるように、JS を 1 行も使っていない
     if (url.pathname === '/') return html5(demoHtml(url.origin));
     // X などに貼る見せ札。外部資源を持たないので単体で描ける
@@ -133,6 +177,8 @@ export default {
     };
     if (SELF[url.pathname]) {
       const [make, w, h] = SELF[url.pathname];
+      const limited = await overLimit(env, request, 'demo');
+      if (limited) return tooMany(limited);
       const body = make();
       try {
         await ensureWasm(env, request);
@@ -161,7 +207,7 @@ export default {
     if (url.pathname === '/health') {
       try {
         await ensureWasm(env, request);
-        return Response.json({ ok: true, wasm: 'loaded', boot });
+        return Response.json({ ok: true, wasm: 'loaded', boot, rateLimiter: !!env.RATE });
       } catch (e) {
         return Response.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });
       }
@@ -174,9 +220,21 @@ export default {
     if (!target && !inlineHtml) {
       return new Response('url または html が必要です', { status: 400 });
     }
+    if (inlineHtml && inlineHtml.length > MAX_INLINE_HTML) {
+      return new Response(`html は ${MAX_INLINE_HTML} バイトまでです`, { status: 413 });
+    }
 
     const width = Math.min(2000, Math.max(64, Number(url.searchParams.get('w')) || DEFAULT_WIDTH));
     const height = Math.min(4000, Math.max(64, Number(url.searchParams.get('h')) || DEFAULT_HEIGHT));
+
+    // トップページが貼っている決まった絵は demo のバケットで数える。
+    // `demo=1` だけで緩くすると、その口から好きな URL を撮られるので、
+    // 一覧に載っている URL と大きさに一致するときだけ認める
+    const isDemoShot = url.searchParams.get('demo') === '1'
+      && DEMO_SHOTS.some(([u, w, h]) => u === target && w === width && h === height);
+    const bucket = isDemoShot ? 'demo' : 'shot';
+    const limited = await overLimit(env, request, bucket);
+    if (limited) return tooMany(limited);
 
     // ページの <script> を実行するか。既定は実行する。
     // 実ページの崩れが JS のせいなのかを切り分けたいときに js=0 を付ける
@@ -268,7 +326,8 @@ export default {
       return new Response(png, {
         headers: {
           'content-type': 'image/png',
-          'cache-control': 'no-store',
+          // 決まった絵は edge に置く。訪問者が指定した絵は毎回描く
+          'cache-control': bucket === 'demo' ? 'public, max-age=3600' : 'no-store',
           // 各段にかかった時間を返す。どこが重いのかを外から見えるようにしておく
           // 非 ASCII を入れると Workers が警告を出すので、値は数字と真偽値だけにする
           'x-timing': JSON.stringify(timing),

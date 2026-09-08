@@ -17,5 +17,12 @@
   // 明示しておく (既定値と同じ)。レイアウトから返ってこないページを踏んだときに、
   // ここで止まる。ja.wikipedia.org/wiki/コーヒー が実際にそうなる
   "limits": { "cpu_ms": 30000 },
+  // 1 リクエストで 0.1〜2 秒の CPU を使うので、公開したままにするなら制限が要る。
+  // 組み込みの Rate Limiting binding (unsafe.bindings の ratelimit) は効かなかった
+  // (20 発通しても success しか返らない) ので、Durable Object で数える
+  "durable_objects": {
+    "bindings": [{ "name": "RATE", "class_name": "RateLimiter" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RateLimiter"] }],
   "observability": { "enabled": true }
 }

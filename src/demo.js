@@ -167,10 +167,23 @@ JavaScript がそこで止まるので、この枠は書き換わりません。
 </body></html>`;
 }
 
+/**
+ * トップページが貼っている、外のサイトの絵。
+ *
+ * この一覧に載っている URL だけが緩いレートリミットを使える。`demo=1` を
+ * 付けるだけで緩くなると、その口から好きな URL を撮られてしまう
+ */
+export const DEMO_SHOTS = [
+  ['https://ja.wikipedia.org/wiki/メインページ', 900, 700, 'ja.wikipedia.org — 日本語、2 カラム、写真'],
+  ['https://developer.mozilla.org/en-US/', 900, 700, 'developer.mozilla.org — CSS 20 枚'],
+];
+
 /** デモのトップページ。origin は自分の URL (自己参照の画像に使う) */
 export function demoHtml(origin) {
+  // demo=1 を付けたものは、このサイトが自分で貼っている決まった絵。
+  // 緩い方のレートリミットで数え、edge にキャッシュさせる
   const shot = (url, w, h) =>
-    `${origin}/shot?w=${w}&h=${h}&url=${encodeURIComponent(url)}`;
+    `${origin}/shot?demo=1&w=${w}&h=${h}&url=${encodeURIComponent(url)}`;
 
   return `<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
@@ -212,16 +225,11 @@ export function demoHtml(origin) {
 
 <h2>実際のサイトを描く</h2>
 <div class="grid">
-  <figure>
-    <img src="${shot('https://ja.wikipedia.org/wiki/メインページ', 900, 700)}" width="900" height="700"
-         alt="日本語版 Wikipedia のメインページを描いた画像">
-    <figcaption>ja.wikipedia.org — 日本語、2 カラム、写真</figcaption>
-  </figure>
-  <figure>
-    <img src="${shot('https://developer.mozilla.org/en-US/', 900, 700)}" width="900" height="700"
-         alt="MDN のトップページを描いた画像">
-    <figcaption>developer.mozilla.org — CSS 20 枚</figcaption>
-  </figure>
+${DEMO_SHOTS.map(([u, w, h, caption]) => `  <figure>
+    <img src="${shot(u, w, h)}" width="${w}" height="${h}"
+         alt="${caption.split(' — ')[0]} を描いた画像">
+    <figcaption>${caption}</figcaption>
+  </figure>`).join('\n')}
 </div>
 
 <h2>自分で試す</h2>

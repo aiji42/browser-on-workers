@@ -11,6 +11,9 @@ GET /shot?url=https://example.com  ->  image/png
 - `GET /shot?url=...&js=0` — ページの `<script>` を実行せずに描く
 - `GET /health` — Wasm とフォントが読めているか
 
+公開しているので、送信元ごとに数を絞っている (10 秒で 4 枚、60 秒で 12 枚)。
+1 枚描くのに 0.1〜2 秒の CPU を使うため。
+
 ## なぜ作ったか
 
 Cloudflare が 2026 年 8 月に [Kitesurf](https://blog.cloudflare.com/kitesurf/) を発表した。Chromium のバイナリを一切使わず、Rust で書いたブラウザエンジンを Wasm にして Workers の V8 isolate の上で動かす、という代物。発表記事には「Chromium より CPU が 3.1 倍、メモリが 7.0 倍少ない」という比較表が載っている。

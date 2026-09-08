@@ -144,6 +144,24 @@ callError: "1 is not a function"              (Boa は not a callable function)
 **排他になっている。** グローバルスコープでは eval が通るが I/O とタイマーが
 使えない。handler では I/O とタイマーが使えるが eval が通らない。
 
+### これは動的 Worker の性質ではなく、Workers 全般の性質
+
+最初は「動的 Worker だと eval が通る」と書いていたが、間違いだった。
+**本体の Worker のモジュールスコープでも通る。**
+
+`src/worker.js` のトップレベル (モジュールの評価中) と handler の中で、
+同じ 2 行を試した結果 (`/eval-here`)。
+
+| | handler の中 | モジュールの評価中 |
+| --- | --- | --- |
+| 本体の Worker | `EvalError: Code generation from strings disallowed for this context` | **ok: 2** |
+| 動的 Worker | 同じ `EvalError` | **ok: 2** |
+
+つまり境目は「動的 Worker かどうか」ではなく、**「モジュールの評価中かどうか」**。
+動的 Worker が効くのは別の理由で、**ページごとに新しいモジュールの評価を
+起こせる**こと。本体の Worker の評価中は 1 度きりなので、そこでページの
+スクリプトを走らせることはできない。
+
 ブラウザはページの資源を取りに行き、タイマーを回さなければならない。
 つまり **handler で走らせるしかなく、handler では eval が使えない。**
 だから別の JS エンジンを持ち込むことになる。
@@ -211,6 +229,58 @@ eval が使えなかった**のかもしれない。発表は 2026-08-06。
 
 どちらも動的 Worker の中で `WebAssembly.Module` として届き、export は 24 個。
 
+### 起動時の CPU にも上限がある。ただし 10 秒近い
+
+グローバルスコープで全部やるということは、**ページの JS も、レイアウトも、
+描画も、全部「起動時」に入る**ということ。ここには専用の上限がある。
+
+ループの回数を上げていって、`/v8shot?html=...&fresh=1` で測った。
+
+| ループ | 結果 | pageScriptMs |
+| --- | --- | --- |
+| 2 億回 | ok | 1483 ms |
+| 5 億回 | ok | 2494 ms |
+| 8.5 億回 | ok | 8603 ms |
+| 10 億回 | ok / **失敗** | 9042 ms / — |
+
+10 億回は 1 度通って 1 度落ちた。落ちたときのメッセージは
+
+```
+Script startup exceeded CPU time limit.
+```
+
+境目は 9〜11 秒あたりで揺れる。**400 ms ではない。** 1 枚の絵を描くには
+足りるが、上限が存在すること自体は設計に効く。live なセッションを
+グローバルスコープに載せることはできない。
+
+### top-level await を使うと、兄弟モジュールの順が決まらない
+
+最初は `setup.js` で `await glue.default(wasm)` としていた。それだけで
+`setup.js` が async モジュールになり、**それを import している側の
+兄弟モジュールが、setup の終わる前に評価された。**
+
+```
+Cannot read properties of undefined (reading 'report')
+```
+
+`entry.js` が `setup.js` と `finish.js` を並べて import していて、
+finish が先に走っていた。
+
+直し方は 2 つある。
+
+1. 依存関係を作る (`finish.js` が `setup.js` から import する)
+2. **top-level await をやめる**
+
+2 が本筋だった。wasm-bindgen は `initSync` を出しているので、
+**15 MB でも同期で instantiate できる。**
+
+```js
+glue.initSync({ module: wasm });
+```
+
+これで setup が同期モジュールになり、静的 import の順がそのまま評価の順に
+なる。`<script type="module">` を文書順に走らせるのにも、この性質が要る。
+
 ### Kitesurf は eval を Boa 実装に差し替えている (推定)
 
 `plain` が V8 で `viaEval` が Boa なのに、両方 1 つの isolate で動いている。
@@ -225,6 +295,160 @@ eval が使えなかった**のかもしれない。発表は 2026-08-06。
 `probes/11-two-engines.mjs` を今日もう一度回した。100 万回のループで、
 Kitesurf の `plain` が 3 ms、`viaNewFunction` が 546 ms (**182 倍遅い**)。
 自作の側で Boa と V8 を比べた 194 倍、記事に書いた 226 倍と同じ桁。
+
+## 3 つの構成を同じ 4 ページで測る
+
+「Boa を引き剥がすと速くなるのか」を確かめるため、同じ 4 ページを 2 つの
+構成に通した。Kitesurf と Chromium は Browser Run で同時に撮っている
+(`probes/19-three-configs.mjs`)。
+
+| | ページの JS | 資源の取得 | eval |
+| --- | --- | --- | --- |
+| **C** (`/shot`) | Boa (本体の Worker) | 先に取って多パス | Boa |
+| **B** (`/v8shot`) | V8 (動的 Worker、グローバルスコープ) | 先に取って多パス | V8 |
+| A (未着手) | Boa (動的 Worker、handler) | 解釈の途中で取りに行く | Boa |
+
+### 壁時計 (手元から観測、TLS の確立を引いた値。3 本の中央値)
+
+| ページ | C: Boa | B: V8 | Kitesurf | Chromium |
+| --- | --- | --- | --- | --- |
+| ja.wikipedia「ウェブブラウザ」 | **1856 ms** | 2815 ms | 8300 ms | 2359 ms |
+| MDN `font-family` | **1912 ms** | 2614 ms | 5960 ms | 2134 ms |
+| TodoMVC (React、CSR) | 2551 ms | 3592 ms | **1824 ms** | 1729 ms |
+| react.dev (React、SSR) | 15109 ms | **7477 ms** | 4144 ms | 2095 ms |
+
+Kitesurf と Chromium は同じ手元のマシンから同じ Browser Run API で撮った
+ので、往復の時間は同じ条件で乗っている。
+
+**Kitesurf は Chromium より 3〜5 倍遅い** (billed の中央値で
+7491 / 5315 / 1535 / 3763 ms 対 1559 / 1614 / 1225 / 1072 ms)。
+Chromium を置き換えるためのものではなく、Chromium を置けない場所に
+置くためのもの、という位置づけが数字にも出ている。
+
+おまけ: **Kitesurf は MDN の `font-family` を描けなかった。** 3 本のうち
+1 本が失敗し、成功した 2 本も 307 バイトしか返ってこない。こちらは
+両経路とも 58 KB の絵になる。
+
+### CPU 時間 (`wrangler tail`、3 本の中央値)
+
+| ページ | C: Boa | B: V8 (**親の分だけ**) |
+| --- | --- | --- |
+| ja.wikipedia | 1149 ms | 898 ms |
+| MDN | 1657 ms | 843 ms |
+| TodoMVC | 2141 ms | 1269 ms |
+| react.dev | **12664 ms** | 3656 ms |
+
+### 動的 Worker の中の実行は、tail に出てこない
+
+B の cpuTime は **本体の Worker の分だけ**。`https://page.invalid/` への
+呼び出しに対応する行が 1 つも出ない。
+
+決め手になった実測。2 億回のループを含むページを `?discover=0` (探索の
+描き直しなし) で通すと、
+
+| | cpuTime | wallTime |
+| --- | --- | --- |
+| 子 Worker で 2 億回 | **24 ms** | 1334 ms |
+
+親は 24 ms しか使っていないのに、壁時計は 1.3 秒。**子の CPU は親の
+cpuTime に入らず、tail にも出ない。** だから B と C の CPU を並べた表は
+「Boa の分」対「探索の描き直しと PNG の分」を比べているだけで、
+**引き算で B の総 CPU を出すことはできない。**
+
+### 答え: 引き剥がすと速くなるのは、ページの JS が重いときだけ
+
+- **軽いページでは遅くなる** (wikipedia 1856 -> 2815 ms、MDN 1912 -> 2614 ms)。
+  グローバルスコープでは fetch できないので、**何が必要かを知るために
+  先に捨てる描画をする**。wikipedia は 2 パス、MDN は 2 パスで 31 件を
+  拾い直している。この探索の分がそのまま乗る
+- **重いページでは速くなる** (react.dev 15109 -> 7477 ms、CPU で
+  12664 -> 3656 ms)。Boa は react.dev の JS を走らせると本文を消すので、
+  **JS ありで描いてから JS なしで描き直している** (`blankWithJs: true`,
+  `usedNoJs: true`)。V8 は 1 回で済む
+
+つまり **Boa は「要らない」のではなく、「別のものを払っている」**。
+V8 を使うには資源を先に全部揃える必要があり、それには捨てる描画が要る。
+
+## React のハイドレーションは V8 側では通った
+
+Boa 経路では通らないと書いていたが、**V8 経路では通る。**
+
+| | ページの JS | 結果 |
+| --- | --- | --- |
+| Boa (`/shot`) | 走る | `blankWithJs: true` -> **JS を切って描き直し** |
+| V8 (`/v8shot`) | 走る | **14 本すべてエラー無し**、`__reactContainer` が付く |
+
+絵だけでは SSR の HTML と区別が付かないので、**React が container と
+その子に直接付ける `__reactContainer` / `_reactListening` というキー**の
+有無で判定した (`report.reactKeys`)。
+
+### engine の差だと言い切るまでにやったこと
+
+最初に V8 側で動かしたときは `location is not defined` で止まった。
+Boa 側 (blitz-vibey-script) の顔を数えたら、**向こうのほうが揃っていた。**
+
+`/shot?html=<script>...typeof...</script>` で数えた結果。
+
+```
+持っている: location history HTMLIFrameElement Node Element HTMLElement
+            Text queueMicrotask fetch navigator getComputedStyle
+            MutationObserver Event CustomEvent requestAnimationFrame
+            document.defaultView
+無い:       setImmediate MessageChannel XMLHttpRequest
+```
+
+そこで **両側の顔を揃えた。**
+
+- V8 側に足した: `location` / `history` / `document.defaultView` /
+  `instanceof` の右辺になる DOM のコンストラクタ (`HTMLIFrameElement` など) /
+  `setImmediate` / `MessageChannel`
+- Boa 側 (`POLYFILL`) に足した: `setImmediate` / `MessageChannel`
+
+**揃えたうえで、react.dev は Boa 側ではやはり白紙になる。**
+だから「Boa だから通らない」は shim の穴ではない。
+
+### V8 側で React を通すのに要ったもの
+
+- **`location` と `history`。** 無いと react.dev の最初の 1 本が
+  `location.search` で落ちて、そこで 14 本が全滅する
+- **`instanceof` の右辺。** React DOM は `t instanceof e.HTMLIFrameElement` と
+  window から辿ったコンストラクタで narrowing する。無いと
+  「Right-hand side of 'instanceof' is not an object」で止まる。
+  BlitzNode と**別の**クラスにしないと、全ノードが iframe として真になる
+- **`setImmediate` と `MessageChannel`。** React 18 のスケジューラは
+  この順でマクロタスクの手段を探す。workerd は `setImmediate` を持っている
+  ので、塞がないと仕事がそこへ消える
+- **タイマーを何周も流すこと。** React は「起きて、少し進めて、また積む」を
+  繰り返す。1 回流して終わりにはできないので、`await Promise.resolve()` を
+  挟みながら 12 周まで回す (await は I/O ではないのでグローバルスコープでも通る)
+- **実行済みの `<script>` を DOM から消さないこと。** 消すと
+  `document.getElementsByTagName('script')[0]` が undefined になり、
+  Google Analytics の定番のスニペットが `.parentNode` で落ちる。
+  ブラウザでは実行後も要素は残るので、`type` を潰して残す
+- **`defer` と `type="module"` を後ろに回すこと。** TodoMVC は
+  `app.bundle.js` が defer、`base.js` が非 defer なので、文書順に走らせると
+  逆になる
+
+### `<script type="module">` は本物のモジュールとして渡せる
+
+間接 eval に流すと `export` の行で SyntaxError になる。動的 Worker の
+モジュールとして置けば V8 がそのままコンパイルする。
+
+ただし **指定子が 1 本でも解決できないと Worker がまるごと起動しない。**
+
+```
+No such module "runtime.3b0471a04a45c8e9.js".
+  imported from "m1wfru51.js"
+```
+
+MDN はこれを踏む。webpack の runtime チャンクは `<script src>` として
+HTML に出てこないので、資源の表に無い。だから
+
+1. import の網を全部たどって、揃っているときだけ昇格させる
+2. 書き換え漏れが 1 本も無いことを、書き換えたあとにもう一度走査して確かめる
+3. それでも起動に失敗したら、昇格を切って描き直す
+
+の 3 段にした。MDN は 6 本のうち 2 本が昇格して、2 本が eval に落ちる。
 
 ## 「JS が動く」と「React が動く」の間の距離
 

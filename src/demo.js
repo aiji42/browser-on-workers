@@ -171,6 +171,7 @@ p{margin:0;font-size:21px;line-height:1.6;color:#555}
 export function jsDemoHtml() {
   return `<!doctype html><html lang="ja"><head><meta charset="utf-8">
 <title>JavaScript は動く — browser-on-workers</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 body{margin:0;padding:26px;background:#fff;color:#111;line-height:1.6;
@@ -293,6 +294,7 @@ export function demoHtml(origin) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Kitesurf を公開情報だけで作ってみた — browser-on-workers</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta name="description" content="Cloudflare の Kitesurf と同じ構成を、発表記事に書かれている部品だけで組んだブラウザ。Chromium を使わず、Cloudflare Workers の isolate の中だけで動く。">
 <meta property="og:title" content="Kitesurf を公開情報だけで作ってみた">
 <meta property="og:description" content="Chromium を使わず、Rust で書いたブラウザエンジンを Wasm にして Cloudflare Workers の isolate で動かす。Stylo・Taffy・Parley・blitz-paint・Boa を wasm32 に載せた。">

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- isolate の中のブラウザ。角の丸い箱に、窓の枠だけを描く -->
+  <rect width="32" height="32" rx="7" fill="#0B0D10"/>
+  <rect x="7" y="9" width="18" height="14" rx="2.5" fill="none" stroke="#fff" stroke-width="2"/>
+  <path d="M7 13.5h18" stroke="#fff" stroke-width="2"/>
+  <circle cx="10.5" cy="11.2" r="1" fill="#fff"/>
+  <!-- Chromium を積んでいないことを、窓の中を空にして示す -->
+  <path d="M12 18h8" stroke="#1B34FF" stroke-width="2" stroke-linecap="round"/>
+</svg>

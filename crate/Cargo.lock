@@ -999,6 +999,7 @@ dependencies = [
  "kurbo",
  "parley",
  "peniko",
+ "url",
  "wasm-bindgen",
 ]
 

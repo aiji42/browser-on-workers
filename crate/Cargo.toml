@@ -26,12 +26,15 @@ parley = { version = "0.11.1", default-features = false, features = ["std"] }
 kurbo = "0.13.1"
 peniko = "0.6"
 wasm-bindgen = "0.2"
+# base_url の検証 (blitz-dom が使っているのと同じクレート)
+url = "2"
 
 [profile.release]
 opt-level = "s"
 lto = true
 codegen-units = 1
-# wasm では unwind できないので abort。
+# wasm32-unknown-unknown は target 自体が unwind 非対応なので、ここは abort 固定で
+# 変えても意味が無い。panic の中身は lib.rs の panic hook が JS の例外にして届ける。
 # strip でシンボル名 (custom:name セクション、約 4MB) を落とす
 panic = "abort"
 strip = true

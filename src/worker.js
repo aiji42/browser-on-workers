@@ -14,7 +14,7 @@ import { encodePNG } from './png.js';
 // Rust 側。wasm-bindgen の glue と、その中身の Wasm。
 // wrangler.jsonc の rules で .wasm は CompiledWasm として読み込まれる
 import wasmModule from '../crate/pkg/kitesurf_clone_bg.wasm';
-import initWasm, { render_png_rgba } from '../crate/pkg/kitesurf_clone.js';
+import initWasm, { render_png_rgba, last_panic } from '../crate/pkg/kitesurf_clone.js';
 
 // Workers にはシステムフォントが無いので、字を出すには持ち込むしかない。
 // scripts/build-fonts.mjs が Latin だけに絞った TTF を作る
@@ -22,6 +22,21 @@ import fontTtf from '../fonts/sans-regular.ttf';
 
 let ready = null;
 const ensureWasm = () => (ready ??= initWasm(wasmModule));
+
+// Rust 側の panic は `RuntimeError: unreachable` として届く (wasm は unwind できない)。
+// abort の前に panic hook がメッセージを控えているので、それを取り出して差し替える。
+// hook は console.error にも同じものを流しているので、Workers のログにも残る
+const describeError = (e) => {
+  // どの経路で来たのか分からないことがあるので、判断材料をそのまま返す
+  let panic;
+  try { panic = last_panic(); } catch (err) { panic = `last_panic() が失敗: ${err?.message}`; }
+  return {
+    message: String(e?.message ?? e),
+    kind: e?.constructor?.name ?? typeof e,
+    isRuntimeError: e instanceof WebAssembly.RuntimeError,
+    panic: panic || null,
+  };
+};
 
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 800;
@@ -92,7 +107,9 @@ export default {
       timing.fetchMs = Date.now() - t;
 
       t = Date.now();
-      const rgba = render_png_rgba(html, new Uint8Array(fontTtf), width, height);
+      // base URL を渡す。blitz-dom は <link href="/x.css"> のような相対参照を
+      // これに対して解決する。無いと (base になれない data: URL が既定なので) panic する
+      const rgba = render_png_rgba(html, target ?? '', new Uint8Array(fontTtf), width, height);
       timing.renderMs = Date.now() - t;
 
       t = Date.now();
@@ -109,10 +126,10 @@ export default {
         },
       });
     } catch (e) {
-      return Response.json(
-        { ok: false, error: String(e?.message ?? e), timing },
-        { status: 500 },
-      );
+      // Rust の panic なら error に "panicked at <file>:<line>:<col>:\n<message>" が入る
+      const error = describeError(e);
+      console.error('render failed:', error, e?.stack ?? '');
+      return Response.json({ ok: false, error, timing }, { status: 500 });
     }
   },
 };

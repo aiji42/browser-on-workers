@@ -1,34 +1,88 @@
 /**
+ * wasm-bindgen の init 時に呼ばれる。panic のメッセージを外に残す。
+ *
+ * wasm32-unknown-unknown は unwind できない (target 自体が abort 固定で、
+ * `panic = "unwind"` にしても `catch_unwind` は何も捕まえない)。panic は最終的に
+ * `unreachable` 命令でトラップし、JS 側には `RuntimeError: unreachable` しか届かない。
+ * そこで abort の前に走る panic hook で
+ *   1. `console.error` にメッセージ (発生箇所の file:line 入り) を流し、
+ *   2. `LAST_PANIC` に控える。
+ * 呼び出し側は `RuntimeError` を受けたら `last_panic()` で中身を取り出せる。
+ *
+ * hook の中から `wasm_bindgen::throw_str` で JS の例外を投げる手もあるが、hook から
+ * 抜けないと std の「panic 処理中」フラグが立ったままになり、同じインスタンスでの
+ * 2 度目の panic は hook を通らず即 abort になる。wasm-bindgen の glue は
+ * インスタンスを 1 つしか持たず (`init` を呼び直しても同じものが返る) Workers の
+ * isolate はリクエストをまたいで生きるので、hook は素直に return して abort に任せる。
+ *
+ * トラップの後も wasm のメモリは残っている。abort は hook の処理が終わってから
+ * 呼ばれるので、`last_panic()` で `LAST_PANIC` を読むのは安全。ただし panic を
+ * 起こした描画の途中状態 (借用中の RefCell 等) は捨てられずに残るので、
+ * 次の描画が連鎖して panic する可能性はある。それも同じ経路でメッセージが出る
+ */
+export function init() {
+    wasm.init();
+}
+
+/**
+ * 直前の panic のメッセージを取り出す (取り出すと消える)。無ければ `None` (JS では `undefined`)。
+ * `render_png_rgba` が `RuntimeError: unreachable` で落ちた直後に呼ぶ
+ * @returns {string | undefined}
+ */
+export function last_panic() {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.last_panic(retptr);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        let v1;
+        if (r0 !== 0) {
+            v1 = getStringFromWasm0(r0, r1);
+            wasm.__wbindgen_export(r0, r1 * 1, 1);
+        }
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * HTML を `width` x `height` のビューポートに描き、RGBA8 のピクセル列を返す。
  *
  * - 戻り値は `width * height * 4` バイト。左上から行優先、1 ピクセル = R, G, B, A
  * - 背景は白で塗ってから描くので全ピクセルの A は 255。vello_cpu の出力は
  *   premultiplied RGBA だが、A = 255 なら straight と一致するので JS 側で
  *   そのまま PNG にできる
+ * - `base_url` はページの URL。`<link href>` や `<img src>` の相対参照を解決する起点に
+ *   なる。取得はしないが、解決できないと blitz-dom が panic するので必ず絶対 URL を渡す。
+ *   インライン HTML のように URL が無いときは空文字でよい (内部で仮の URL を敷く)
  * - `font_ttf` はページ全体に使うフォント (TTF / OTF / TTC)。CSS の font-family が
  *   何を指していてもこのフォントに落ちる
  * - vello_cpu の描画面は u16 なので、辺の長さは 65535 まで
  * - サブリソース (画像・外部 CSS・web font) は取得しない。インライン `<style>` と
  *   `style` 属性だけが効く
  * @param {string} html
+ * @param {string} base_url
  * @param {Uint8Array} font_ttf
  * @param {number} width
  * @param {number} height
  * @returns {Uint8Array}
  */
-export function render_png_rgba(html, font_ttf, width, height) {
+export function render_png_rgba(html, base_url, font_ttf, width, height) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(html, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const ptr0 = passStringToWasm0(html, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(font_ttf, wasm.__wbindgen_export);
+        const ptr1 = passStringToWasm0(base_url, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         const len1 = WASM_VECTOR_LEN;
-        wasm.render_png_rgba(retptr, ptr0, len0, ptr1, len1, width, height);
+        const ptr2 = passArray8ToWasm0(font_ttf, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.render_png_rgba(retptr, ptr0, len0, ptr1, len1, ptr2, len2, width, height);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        var v3 = getArrayU8FromWasm0(r0, r1).slice();
-        wasm.__wbindgen_export3(r0, r1 * 1, 1);
-        return v3;
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export(r0, r1 * 1, 1);
+        return v4;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -42,6 +96,9 @@ function __wbg_get_imports() {
         },
         __wbg___wbindgen_throw_5d9e815e6fdf150f: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
+        },
+        __wbg_error_51dc455fc840bcbc: function(arg0, arg1) {
+            console.error(getStringFromWasm0(arg0, arg1));
         },
         __wbg_now_d1fb6650485d7f3e: function() {
             const ret = Date.now();
@@ -222,6 +279,7 @@ function __wbg_finalize_init(instance, module) {
     wasmModule = module;
     cachedDataViewMemory0 = null;
     cachedUint8ArrayMemory0 = null;
+    wasm.__wbindgen_start();
     return wasm;
 }
 

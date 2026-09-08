@@ -4,7 +4,7 @@
 //! 第 1 段: blitz-html で HTML をパースし、Stylo にスタイルを解決させる (`parse_and_resolve`)。
 //! 第 2 段: blitz-paint + vello_cpu で RGBA のピクセル列に描く (`render_png_rgba`)。
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyrender::{ImageRenderer, PaintScene};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
@@ -17,12 +17,76 @@ use parley::fontique::{
 use peniko::{Color, Fill};
 use wasm_bindgen::prelude::*;
 
+/// 直前の panic のメッセージ。panic hook が書き、`last_panic` で JS から取り出す
+static LAST_PANIC: Mutex<Option<String>> = Mutex::new(None);
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn console_error(s: &str);
+}
+
+/// wasm-bindgen の init 時に呼ばれる。panic のメッセージを外に残す。
+///
+/// wasm32-unknown-unknown は unwind できない (target 自体が abort 固定で、
+/// `panic = "unwind"` にしても `catch_unwind` は何も捕まえない)。panic は最終的に
+/// `unreachable` 命令でトラップし、JS 側には `RuntimeError: unreachable` しか届かない。
+/// そこで abort の前に走る panic hook で
+///   1. `console.error` にメッセージ (発生箇所の file:line 入り) を流し、
+///   2. `LAST_PANIC` に控える。
+/// 呼び出し側は `RuntimeError` を受けたら `last_panic()` で中身を取り出せる。
+///
+/// hook の中から `wasm_bindgen::throw_str` で JS の例外を投げる手もあるが、hook から
+/// 抜けないと std の「panic 処理中」フラグが立ったままになり、同じインスタンスでの
+/// 2 度目の panic は hook を通らず即 abort になる。wasm-bindgen の glue は
+/// インスタンスを 1 つしか持たず (`init` を呼び直しても同じものが返る) Workers の
+/// isolate はリクエストをまたいで生きるので、hook は素直に return して abort に任せる。
+///
+/// トラップの後も wasm のメモリは残っている。abort は hook の処理が終わってから
+/// 呼ばれるので、`last_panic()` で `LAST_PANIC` を読むのは安全。ただし panic を
+/// 起こした描画の途中状態 (借用中の RefCell 等) は捨てられずに残るので、
+/// 次の描画が連鎖して panic する可能性はある。それも同じ経路でメッセージが出る
+#[wasm_bindgen(start)]
+pub fn init() {
+    #[cfg(target_arch = "wasm32")]
+    std::panic::set_hook(Box::new(|info| {
+        // Display は "panicked at <file>:<line>:<col>:\n<message>" の形
+        let msg = info.to_string();
+        console_error(&format!("[kitesurf_clone] {msg}"));
+        if let Ok(mut slot) = LAST_PANIC.lock() {
+            *slot = Some(msg);
+        }
+    }));
+}
+
+/// 直前の panic のメッセージを取り出す (取り出すと消える)。無ければ `None` (JS では `undefined`)。
+/// `render_png_rgba` が `RuntimeError: unreachable` で落ちた直後に呼ぶ
+#[wasm_bindgen]
+pub fn last_panic() -> Option<String> {
+    LAST_PANIC.lock().ok().and_then(|mut slot| slot.take())
+}
+
+/// 相対 URL を解決する起点。blitz-dom の既定は `data:text/css;charset=utf-8;base64,` で、
+/// これは base になれない URL なので、`<link href="/x.css">` のような相対参照が 1 つでも
+/// あると `resolve_url` が panic する。ページの URL が無い (インライン HTML) ときは
+/// 適当な絶対 URL を敷いて、少なくとも落ちないようにする
+const FALLBACK_BASE_URL: &str = "https://inline.invalid/";
+
+fn base_url_or_fallback(base_url: &str) -> String {
+    match url::Url::parse(base_url) {
+        Ok(u) if !u.cannot_be_a_base() => u.to_string(),
+        _ => FALLBACK_BASE_URL.to_string(),
+    }
+}
+
 /// HTML を渡してノード数を返す。ここが通れば
 /// html5ever + Stylo + Taffy が wasm32 で動いていることになる。
 pub fn parse_and_resolve(html: &str) -> usize {
     let mut doc: BaseDocument = blitz_html::HtmlDocument::from_html(
         html,
         DocumentConfig {
+            base_url: Some(FALLBACK_BASE_URL.to_string()),
             // wasm32 には rayon のスレッドプールが無いので並列トラバースは使えない
             style_threading: StyleThreading::Sequential,
             ..Default::default()
@@ -96,17 +160,27 @@ fn build_font_ctx(font_ttf: &[u8]) -> FontContext {
 /// - 背景は白で塗ってから描くので全ピクセルの A は 255。vello_cpu の出力は
 ///   premultiplied RGBA だが、A = 255 なら straight と一致するので JS 側で
 ///   そのまま PNG にできる
+/// - `base_url` はページの URL。`<link href>` や `<img src>` の相対参照を解決する起点に
+///   なる。取得はしないが、解決できないと blitz-dom が panic するので必ず絶対 URL を渡す。
+///   インライン HTML のように URL が無いときは空文字でよい (内部で仮の URL を敷く)
 /// - `font_ttf` はページ全体に使うフォント (TTF / OTF / TTC)。CSS の font-family が
 ///   何を指していてもこのフォントに落ちる
 /// - vello_cpu の描画面は u16 なので、辺の長さは 65535 まで
 /// - サブリソース (画像・外部 CSS・web font) は取得しない。インライン `<style>` と
 ///   `style` 属性だけが効く
 #[wasm_bindgen]
-pub fn render_png_rgba(html: &str, font_ttf: &[u8], width: u32, height: u32) -> Vec<u8> {
+pub fn render_png_rgba(
+    html: &str,
+    base_url: &str,
+    font_ttf: &[u8],
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
     let mut doc: BaseDocument = blitz_html::HtmlDocument::from_html(
         html,
         DocumentConfig {
             viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
+            base_url: Some(base_url_or_fallback(base_url)),
             font_ctx: Some(build_font_ctx(font_ttf)),
             // wasm32 には rayon のスレッドプールが無いので並列トラバースは使えない
             style_threading: StyleThreading::Sequential,
@@ -153,7 +227,7 @@ mod tests {
         let (w, h) = (200u32, 100u32);
         let html = r#"<html><body style="margin:0;background:#ff0000">
             <p style="margin:0;font-size:40px;color:#000">Hello</p></body></html>"#;
-        let buf = render_png_rgba(html, &font, w, h);
+        let buf = render_png_rgba(html, "", &font, w, h);
         assert_eq!(buf.len(), (w * h * 4) as usize);
 
         // 右下は body の背景色 (赤) のまま
@@ -178,7 +252,56 @@ mod tests {
     #[test]
     fn white_background_when_unspecified() {
         let font = std::fs::read(FONT_PATH).expect("Arial.ttf");
-        let buf = render_png_rgba("<p>x</p>", &font, 50, 50);
+        let buf = render_png_rgba("<p>x</p>", "", &font, 50, 50);
         assert_eq!(px(&buf, 50, 49, 49), [255, 255, 255, 255]);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod fixture_tests {
+    use super::*;
+
+    const FONT: &str = "/System/Library/Fonts/Supplemental/Arial.ttf";
+
+    /// 相対 URL の stylesheet があっても落ちない (以前は blitz-dom の `resolve_url` で panic した)。
+    /// base_url が空 (インライン HTML) でも同じ
+    #[test]
+    fn relative_stylesheet_does_not_panic() {
+        let font = std::fs::read(FONT).unwrap();
+        let html = r#"<html><head>
+            <link rel="stylesheet" href="/a.css">
+            <link rel="stylesheet" href="a.css">
+            <link rel="icon" href="/favicon.svg">
+            <style>@import "b.css"; body { background: url(c.png) }</style>
+            </head><body><img src="d.png"><p>x</p></body></html>"#;
+        for base in ["", "https://example.com/post/", "not a url", "data:text/html,x"] {
+            let buf = render_png_rgba(html, base, &font, 64, 64);
+            assert_eq!(buf.len(), 64 * 64 * 4, "base_url = {base:?}");
+        }
+    }
+
+    /// リポジトリに置いた実ページ (相対 stylesheet を持つもの) が全部通る
+    #[test]
+    fn bundled_fixtures_render() {
+        let font = std::fs::read(FONT).unwrap();
+        for name in ["example", "todomvc", "aiji42", "mdn", "wikipedia", "kitesurf"] {
+            let html = std::fs::read_to_string(format!("fixtures/{name}.html")).unwrap();
+            let buf = render_png_rgba(&html, "https://example.com/", &font, 320, 240);
+            assert_eq!(buf.len(), 320 * 240 * 4, "{name}");
+        }
+    }
+
+    /// `FIXTURE=fixtures/kitesurf.html cargo test fixture -- --nocapture` で実ページを食わせる
+    #[test]
+    fn render_fixture() {
+        let Ok(path) = std::env::var("FIXTURE") else { return };
+        let font = std::fs::read(FONT).unwrap();
+        let html = std::fs::read_to_string(&path).unwrap();
+        let t = std::time::Instant::now();
+        let buf = render_png_rgba(&html, "https://example.com/", &font, 800, 600);
+        eprintln!("{path}: {} bytes html -> {} bytes rgba in {:?}", html.len(), buf.len(), t.elapsed());
+        if let Ok(dir) = std::env::var("RENDER_DUMP_DIR") {
+            std::fs::write(format!("{dir}/fixture.rgba"), &buf).unwrap();
+        }
     }
 }

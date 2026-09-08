@@ -12,9 +12,19 @@ crate-type = ["cdylib", "rlib"]
 # blitz-dom は Stylo (CSS) と Taffy (レイアウト) を引き込む
 blitz-dom = "0.3.0-beta.2"
 blitz-html = "0.3.0-beta.2"
+# Viewport / ColorScheme の型が置かれているクレート (blitz-dom は再 export していない)
+blitz-traits = "=0.3.0-beta.2"
+# blitz-dom の DOM + レイアウト結果を anyrender の描画コマンドに落とす
 blitz-paint = "0.3.0-beta.2"
-anyrender_vello_cpu = "0.17.0"
+# anyrender は 2D 描画の抽象。vello_cpu バックエンドが CPU だけでラスタライズする
 anyrender = "0.13.0"
+anyrender_vello_cpu = "0.17.0"
+# Parley の FontContext / fontique の Collection にフォントを登録するため直接依存する。
+# `system` feature (OS のフォントを列挙する) は wasm32 に無いので切る
+parley = { version = "0.11.1", default-features = false, features = ["std"] }
+# 背景を白で塗るための図形・色の型 (blitz-paint と同じバージョン)
+kurbo = "0.13.1"
+peniko = "0.6"
 wasm-bindgen = "0.2"
 
 [profile.release]

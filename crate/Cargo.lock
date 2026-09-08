@@ -995,6 +995,10 @@ dependencies = [
  "blitz-dom",
  "blitz-html",
  "blitz-paint",
+ "blitz-traits",
+ "kurbo",
+ "parley",
+ "peniko",
  "wasm-bindgen",
 ]
 

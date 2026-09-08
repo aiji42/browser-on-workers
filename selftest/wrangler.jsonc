@@ -1,0 +1,8 @@
+{
+  "name": "bow-selftest",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  // Rust 側が出来る前に、JS 側の継ぎ目だけを確かめるための使い捨て Worker
+  "rules": [{ "type": "Data", "globs": ["**/*.ttf"] }]
+}

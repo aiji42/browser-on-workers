@@ -3,10 +3,16 @@
   "main": "src/worker.js",
   "compatibility_date": "2026-09-01",
   "workers_dev": true,
-  // Rust 側の Wasm と、埋め込むフォントをモジュールとして読み込む
+  // Rust 側の Wasm はバンドルに同梱する
   "rules": [
-    { "type": "CompiledWasm", "globs": ["**/*.wasm"] },
-    { "type": "Data", "globs": ["**/*.ttf"] }
+    { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": false }
   ],
+  // フォントは Static Assets に置いて、実行時に binding から読む。
+  // Kitesurf も PageRenderer が Static Assets からフォントを取っている。
+  // スクリプトサイズに含まれないので、フォントを増やしても上限に効かない
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
   "observability": { "enabled": true }
 }

@@ -48,7 +48,7 @@ CSS のパースとカスケードは OS に依存しない純粋な計算なの
 
 ## フォントは持ち込むしかない
 
-Workers にはフォントが 1 つも無い。字を出すにはフォントファイルを埋め込む。
+Workers にはフォントが 1 つも無い。字を出すにはフォントファイルを持ち込む。
 
 **woff2 は JS 側ではほどけない。** Brotli で圧縮されていて、Workers の
 `DecompressionStream` は gzip と deflate しか扱えない。なので埋め込むフォントは
@@ -63,7 +63,38 @@ TrueType のまま置く。
 リポジトリに既にある `subset-font` に `targetFormat: 'truetype'` を渡すと
 woff2 から TTF を作れる。1 ウェイト 20 KB ほどに収まった。
 
-日本語を出すなら文字を足せば入るが、グリフ数に比例して大きくなる。
+日本語はひらがな・カタカナ・CJK 統合漢字を入れて 2.2 MB。グリフ数にそのまま比例する。
+
+### 置き場所は Static Assets
+
+フォントは Wasm にも JS のバンドルにも埋め込まず、`public/fonts/` に置いて
+Static Assets として配り、実行時に `env.ASSETS.fetch()` で読んでいる。Kitesurf も
+PageRenderer が「Static Assets からフォントと画像を取る」と書いている。
+
+スクリプトサイズの上限 (Free 3 MB / Paid 10 MB。2026-09-04 以降は非圧縮 64 MiB)
+に効かなくなるのが理由。日本語 1 ウェイトで 2.2 MB あるので、フォントを埋め込むか
+外に出すかで上限までの余裕がかなり変わる。
+
+| | スクリプト (非圧縮) | gzip |
+| --- | --- | --- |
+| フォント同梱 | 17.14 MB | 5.87 MB |
+| Static Assets | 15.35 MB | 4.65 MB |
+
+代わりに cold start で読み込みが要る。`/health` を叩いて測ると、2.2 MB の
+日本語フォントが 9〜15 ms、Latin 2 本が 4〜17 ms。isolate ごとに 1 回だけなので
+合計 20〜35 ms。
+
+```json
+{"initMs":0,"fonts":[
+  {"path":"/fonts/sans-regular.ttf","kb":20,"fetchMs":7,"addMs":0},
+  {"path":"/fonts/sans-bold.ttf","kb":20,"fetchMs":4,"addMs":0},
+  {"path":"/fonts/jp-regular.ttf","kb":2188,"fetchMs":10,"addMs":0}]}
+```
+
+`initMs` と `addMs` が 0 なのは速いからではなく、**Workers の `Date.now()` が I/O の
+無い区間で進まない**ため。Wasm の instantiate と `add_font` は純粋な計算なので、
+その間クロックが固定される。`fetchMs` だけが数字を持つのはそこに I/O があるから。
+Kitesurf の中で `Date.now()` が 3 ms 刻みで止まって見えたのと同じ現象。
 
 ## PNG は自分で作る
 
@@ -146,9 +177,13 @@ Parley は「family にその文字が無い」と script 別の fallback を探
 script fallback 14 個の全部に載せる。
 
 ```js
-add_font(new Uint8Array(sansRegular), 'sans');
-add_font(new Uint8Array(sansBold),    'sans'); // 同じ family 名なら weight で解決される
-add_font(new Uint8Array(jpRegular),   'jp');
+const load = async (path, family) => {
+  const res = await env.ASSETS.fetch(new URL(path, request.url));
+  add_font(new Uint8Array(await res.arrayBuffer()), family);
+};
+await load('/fonts/sans-regular.ttf', 'sans');
+await load('/fonts/sans-bold.ttf',    'sans'); // 同じ family 名なら weight で解決される
+await load('/fonts/jp-regular.ttf',   'jp');
 const rgba = render_png_rgba(html, baseUrl, width, height);
 ```
 

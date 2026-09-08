@@ -17,29 +17,46 @@ import { fetchHtml, fetchStylesheets, fetchImages, fetchResources } from './outb
 // wrangler.jsonc の rules で .wasm は CompiledWasm として読み込まれる
 import wasmModule from '../crate/pkg/kitesurf_clone_bg.wasm';
 import initWasm, {
-  add_font, add_resource, clear_resources, missed_resources, render_png_rgba, last_panic,
+  add_font, add_resource, clear_resources, missed_resources, render_png_rgba,
+  render_png_rgba_no_js, last_js_errors, last_panic,
 } from '../crate/pkg/kitesurf_clone.js';
 
 // Workers にはシステムフォントが 1 つも無いので、字を出すには持ち込むしかない。
-// woff2 は Brotli で圧縮されていて Workers 側でほどけないので TrueType のまま置く。
-// scripts/build-fonts.mjs が生成する
-import sansRegular from '../fonts/sans-regular.ttf';
-import sansBold from '../fonts/sans-bold.ttf';
-import jpRegular from '../fonts/jp-regular.ttf';
+// woff2 は Brotli で圧縮されていて Workers 側でほどけないので TrueType のまま置く
+// (scripts/build-fonts.mjs が public/fonts/ に生成する)。
+//
+// バンドルに埋め込まず Static Assets に置いて、実行時に ASSETS binding で読む。
+// Kitesurf も PageRenderer が Static Assets からフォントを取っている。
+// スクリプトサイズに含まれないので、フォントを増やしても上限に効かない
 
-// フォントの登録は isolate ごとに 1 度だけ。2 度呼ぶと同じ face が二重に入る。
 // 登録順が優先順位になるので、Latin を先、日本語を後にする
 // (どちらも持っている英数字は Latin 側で出る)
 const FONTS = [
-  [sansRegular, 'sans'],
-  [sansBold, 'sans'],      // 同じ family に入れると weight が解決される
-  [jpRegular, 'jp'],       // 文字集合が違うので別 family。同じにすると片方が消える
+  ['/fonts/sans-regular.ttf', 'sans'],
+  ['/fonts/sans-bold.ttf', 'sans'],   // 同じ family に入れると weight が解決される
+  ['/fonts/jp-regular.ttf', 'jp'],    // 文字集合が違うので別 family。同じにすると片方が消える
 ];
 
+// フォントの登録は isolate ごとに 1 度だけ。2 度呼ぶと同じ face が二重に入る。
+// cold start のときだけ Static Assets からの読み込みが乗る (2 MB で数十ミリ秒)
 let ready = null;
-const ensureWasm = () => (ready ??= (async () => {
+let boot = null;
+const ensureWasm = (env, request) => (ready ??= (async () => {
+  const fonts = [];
+  let t = Date.now();
   await initWasm(wasmModule);
-  for (const [ttf, family] of FONTS) add_font(new Uint8Array(ttf), family);
+  const initMs = Date.now() - t;
+  for (const [path, family] of FONTS) {
+    t = Date.now();
+    const res = await env.ASSETS.fetch(new URL(path, request.url));
+    if (!res.ok) throw new Error(`font not found: ${path} (${res.status})`);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const fetchMs = Date.now() - t;
+    t = Date.now();
+    const faces = add_font(bytes, family);
+    fonts.push({ path, family, kb: Math.round(bytes.length / 1024), faces, fetchMs, addMs: Date.now() - t });
+  }
+  boot = { initMs, fonts };
 })());
 
 // Rust 側の panic は `RuntimeError: unreachable` として届く (wasm は unwind できない)。
@@ -67,6 +84,7 @@ const usage = `browser-on-workers
 
   GET /shot?url=<URL>[&w=1280][&h=800]   ページを PNG で返す
   GET /shot?html=<HTML>                  渡した HTML を直接描く
+  GET /shot?url=<URL>&js=0               ページの <script> を実行せずに描く
   GET /health                            Wasm が読めているかだけ確認する
 
 Chromium は使っていません。HTML のパース (html5ever)、CSS (Stylo)、
@@ -75,7 +93,7 @@ Wasm として動かしています。
 `;
 
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const url = new URL(request.url);
 
     const html5 = (body) => new Response(body, {
@@ -95,7 +113,7 @@ export default {
       const w = url.pathname === '/card.png' ? 1200 : 1000;
       const h = url.pathname === '/card.png' ? 630 : 900;
       try {
-        await ensureWasm();
+        await ensureWasm(env, request);
         clear_resources();
         const rgba = render_png_rgba(body, `${url.origin}/`, w, h);
         return new Response(await encodePNG(rgba, w, h), {
@@ -111,12 +129,8 @@ export default {
 
     if (url.pathname === '/health') {
       try {
-        await ensureWasm();
-        return Response.json({
-          ok: true,
-          wasm: 'loaded',
-          fonts: FONTS.map(([ttf, family]) => ({ family, kb: Math.round(ttf.byteLength / 1024) })),
-        });
+        await ensureWasm(env, request);
+        return Response.json({ ok: true, wasm: 'loaded', boot });
       } catch (e) {
         return Response.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });
       }
@@ -133,9 +147,15 @@ export default {
     const width = Math.min(2000, Math.max(64, Number(url.searchParams.get('w')) || DEFAULT_WIDTH));
     const height = Math.min(4000, Math.max(64, Number(url.searchParams.get('h')) || DEFAULT_HEIGHT));
 
+    // ページの <script> を実行するか。既定は実行する。
+    // 実ページの崩れが JS のせいなのかを切り分けたいときに js=0 を付ける
+    const runJs = url.searchParams.get('js') !== '0';
+    const render = runJs ? render_png_rgba : render_png_rgba_no_js;
+
     const timing = {};
+    timing.js = runJs;
     try {
-      await ensureWasm();
+      await ensureWasm(env, request);
 
       let t = Date.now();
       let html = inlineHtml ?? '';
@@ -176,7 +196,7 @@ export default {
       // CSS の中の url() や @font-face は、その CSS が表に入って初めて読めるので、
       // @import が段になっていると 1 周では終わらない。空になるまで回す
       t = Date.now();
-      let rgba = render_png_rgba(html, baseUrl, width, height);
+      let rgba = render(html, baseUrl, width, height);
       timing.passes = 1;
       timing.recovered = [];
       for (let pass = 0; pass < MAX_PASSES; pass++) {
@@ -185,11 +205,18 @@ export default {
         const more = await fetchResources(missed, base, deny);
         if (!more.got.length) break;
         for (const r of more.got) add_resource(r.url, r.bytes);
-        rgba = render_png_rgba(html, baseUrl, width, height);
+        rgba = render(html, baseUrl, width, height);
         timing.passes++;
         timing.recovered.push({ asked: missed.length, got: more.got.length, bytes: more.bytes });
       }
       timing.renderMs = Date.now() - t;
+      // JS が途中で死んでいても絵は出る。何が起きたのかはヘッダで返す
+      // (ヘッダの長さに限りがあるので、頭を少しだけ)
+      if (runJs) {
+        const errors = last_js_errors();
+        timing.jsErrors = errors.length;
+        timing.jsError = errors.length ? errors[0].slice(0, 160) : null;
+      }
 
       t = Date.now();
       const png = await encodePNG(rgba, width, height);

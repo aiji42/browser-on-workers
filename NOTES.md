@@ -369,6 +369,34 @@ cpuTime に入らず、tail にも出ない。** だから B と C の CPU を�
 つまり **Boa は「要らない」のではなく、「別のものを払っている」**。
 V8 を使うには資源を先に全部揃える必要があり、それには捨てる描画が要る。
 
+## SandboxOutbound は、専用の entrypoint にしないと再帰する
+
+`globalOutbound` に Fetcher を渡すと、**子 Worker の `fetch` が全部そこへ届く。**
+URL はページが要求したものそのまま。子のコードにネットワークの権限は無く、
+方針を親の 1 箇所に置ける。Kitesurf の SandboxOutbound がこの位置。
+
+```jsonc
+"services": [
+  { "binding": "OUTBOUND", "service": "browser-on-workers", "entrypoint": "Outbound" }
+]
+```
+
+```js
+globalOutbound: env.OUTBOUND,
+```
+
+最初は自分自身 (既定の `fetch`) に向けた。**それだと再帰する。**
+中継の依頼と外から来たリクエストが同じ handler に届くので、区別が付かない。
+ページが `https://not-kitesurf.aiji42.dev/shot?url=...` を要求すると、
+自分のルーティングに落ちて自分を呼ぶ。
+
+`WorkerEntrypoint` を 1 つ増やして、そこに向けたら分かれた。
+
+| 子から取りに行った先 | 既定の fetch に向けたとき | 専用の entrypoint に向けたとき |
+| --- | --- | --- |
+| `https://ja.wikipedia.org/wiki/Main_Page` | 200 (143 KB) | 200 (143 KB) |
+| `https://not-kitesurf.aiji42.dev/health` | **200 (通ってしまう)** | **403** |
+
 ## React のハイドレーションは V8 側では通った
 
 Boa 経路では通らないと書いていたが、**V8 経路では通る。**

@@ -40,7 +40,7 @@ const MAX_PASSES = 6;
 const MAX_PER_PASS = 48;
 
 /** 動的 Worker の中身 (handler で走る部分) を組む */
-function entryModule({ baseUrl, width, height, fonts, generics, timerLimit }) {
+function entryModule({ baseUrl, width, height, fonts, generics, timerLimit, probe }) {
   return `
 import * as glue from './glue.js';
 import wasm from './engine.wasm';
@@ -54,6 +54,7 @@ ${fonts.map((f, i) => `glue.add_font(new Uint8Array(font${i}), ${JSON.stringify(
 ${generics.map(([g, fams]) => `glue.set_generic_lead(${JSON.stringify(g)}, ${JSON.stringify(fams)});`).join('\n')}
 
 const BASE = ${JSON.stringify(baseUrl)};
+const PROBE = ${JSON.stringify(probe ?? null)};
 const W = ${width};
 const H = ${height};
 
@@ -120,6 +121,16 @@ export default {
     report.jsErrors = glue.sess_js_errors(doc).slice(0, 8);
     report.pending = glue.sess_pending(doc).length;
 
+    // 白紙になったときの手がかりを **絵に焼く**。
+    //
+    // sess_eval は真偽しか返さないので、値を JS 側に持ち帰る道が無い。
+    // document の中に書き込ませて、そのまま描けば外から読める
+    if (PROBE) {
+      const ok = glue.sess_eval(doc, PROBE);
+      report.probe = ok;
+      glue.sess_settle(doc);
+    }
+
     if (path === '/report') { glue.sess_close(doc); return Response.json(report); }
     const rgba = glue.sess_paint(doc);
     glue.sess_close(doc);
@@ -147,7 +158,7 @@ export async function renderInBoaWorker(env, request, page) {
     'glue.js': await (await env.ASSETS.fetch(new URL('/glue.js', request.url))).text(),
     'engine.wasm': { wasm: (await import('../crate/pkg/kitesurf_clone_bg.wasm')).default },
     'page.html': { text: html },
-    'entry.js': entryModule({ baseUrl, width, height, fonts, generics, timerLimit }),
+    'entry.js': entryModule({ baseUrl, width, height, fonts, generics, timerLimit, probe: page.probe }),
   };
   fonts.forEach((f, i) => { modules[`font${i}.ttf`] = { data: f.bytes.buffer ?? f.bytes }; });
 

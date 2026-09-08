@@ -58,6 +58,287 @@ export const POLYFILL = `(function () {
     w.performance.now = function () { tick += 0.1; return tick; };
   }
 
+  // DOM の口の穴を塞ぐ。
+  //
+  // 両経路の DOM を総当たりで比べたら、Boa 側 (blitz-vibey-script) と
+  // V8 側 (自分で書いた shim) で欠けているものが違った。React DOM は
+  // ハイドレーションの途中でこれらを呼ぶので、無いと「呼べない」で
+  // 例外になり、React は不一致と判断して SSR の HTML を捨てる。
+  //
+  // prototype に足せるかどうかは engine 側の作りに依るので、
+  // 足したうえで効いているかを別途測る (probes の api.html)
+  var protos = [];
+  ['Element', 'HTMLElement', 'Node'].forEach(function (name) {
+    var c = w[name];
+    if (c && c.prototype) protos.push(c.prototype);
+  });
+  var addMethod = function (name, fn) {
+    for (var i = 0; i < protos.length; i++) {
+      var pr = protos[i];
+      try { if (typeof pr[name] !== 'function') pr[name] = fn; } catch (e) { /* 読み取り専用なら諦める */ }
+    }
+  };
+
+  // 名前空間つきの属性。SVG の xlink などで React が使う。
+  // 名前空間は無視して普通の属性として扱う
+  addMethod('getAttributeNS', function (ns, n) { return this.getAttribute(n); });
+  addMethod('setAttributeNS', function (ns, n, v) { return this.setAttribute(n, v); });
+  addMethod('removeAttributeNS', function (ns, n) { return this.removeAttribute(n); });
+
+  addMethod('hasChildNodes', function () {
+    var c = this.childNodes;
+    return !!(c && c.length);
+  });
+  addMethod('normalize', function () { /* テキストノードの結合。絵には出ない */ });
+  addMethod('getClientRects', function () {
+    var r = this.getBoundingClientRect ? this.getBoundingClientRect() : null;
+    return r ? [r] : [];
+  });
+  addMethod('setSelectionRange', function () { /* 入力欄の選択。1 枚の絵には出ない */ });
+
+  // isEqualNode。Next.js の head 管理が <meta> や <link> を突き合わせるのに使う。
+  // 無いと updateHead が毎回落ちる。outerHTML の比較で足りる
+  addMethod('isEqualNode', function (other) {
+    if (!other) return false;
+    if (other === this) return true;
+    try {
+      if (this.outerHTML != null && other.outerHTML != null) {
+        return String(this.outerHTML) === String(other.outerHTML);
+      }
+      return String(this.nodeName) === String(other.nodeName)
+        && String(this.textContent) === String(other.textContent);
+    } catch (e) { return false; }
+  });
+  addMethod('isSameNode', function (other) { return other === this; });
+
+  // element.attributes。
+  //
+  // **これが無いと React のハイドレーションが必ず失敗する。**
+  // diffHydratedProperties が属性を列挙して突き合わせるので、undefined だと
+  // 「cannot convert 'null' or 'undefined' to object」で落ち、React は
+  // 不一致と判断して SSR の HTML を捨てる (Error #418)。
+  //
+  // engine 側に属性名を列挙する口が無いので、outerHTML の開きタグを読んで組む。
+  // 正規表現はこのファイルが template literal なのでエスケープが潰れる。
+  // 手で走査する
+  var WS = ' ' + String.fromCharCode(9) + String.fromCharCode(10) + String.fromCharCode(13);
+  var isWs = function (c) { return WS.indexOf(c) >= 0; };
+  var parseAttrs = function (html) {
+    var list = [];
+    if (!html || html.charAt(0) !== '<') return list;
+    var gt = html.indexOf('>');
+    var tag = html.slice(1, gt < 0 ? html.length : gt);
+    var i = 0;
+    while (i < tag.length && !isWs(tag.charAt(i))) i++;   // タグ名を飛ばす
+    while (i < tag.length) {
+      while (i < tag.length && isWs(tag.charAt(i))) i++;
+      if (i >= tag.length || tag.charAt(i) === '/') break;
+      var ns = i;
+      while (i < tag.length && !isWs(tag.charAt(i)) && tag.charAt(i) !== '=') i++;
+      var name = tag.slice(ns, i);
+      var value = '';
+      var j = i;
+      while (j < tag.length && isWs(tag.charAt(j))) j++;
+      if (tag.charAt(j) === '=') {
+        j++;
+        while (j < tag.length && isWs(tag.charAt(j))) j++;
+        var q = tag.charAt(j);
+        if (q === '"' || q === "'") {
+          var close = tag.indexOf(q, j + 1);
+          if (close < 0) close = tag.length;
+          value = tag.slice(j + 1, close);
+          i = close + 1;
+        } else {
+          var vs = j;
+          while (j < tag.length && !isWs(tag.charAt(j))) j++;
+          value = tag.slice(vs, j);
+          i = j;
+        }
+      } else {
+        i = j;
+      }
+      if (name) list.push({ name: name, localName: name, value: value, specified: true, nodeName: name, nodeValue: value });
+    }
+    return list;
+  };
+  // select.options。React DOM の <select> の初期化が node.options を
+  // そのまま for で回すので、無いと落ちる (react.dev には言語の select がある)
+  protos.forEach(function (pr) {
+    try {
+      if (pr.options !== undefined) return;
+      Object.defineProperty(pr, 'options', {
+        configurable: true,
+        get: function () {
+          if (String(this.tagName).toLowerCase() !== 'select') return undefined;
+          var found = this.querySelectorAll ? this.querySelectorAll('option') : [];
+          var list = [];
+          for (var i = 0; i < found.length; i++) list.push(found[i]);
+          list.item = function (n) { return this[n] || null; };
+          return list;
+        }
+      });
+    } catch (e) { /* 定義できない engine では諦める */ }
+  });
+
+  protos.forEach(function (pr) {
+    try {
+      if (pr.attributes !== undefined) return;
+      Object.defineProperty(pr, 'attributes', {
+        configurable: true,
+        get: function () {
+          var list = parseAttrs(String(this.outerHTML == null ? '' : this.outerHTML));
+          list.item = function (n) { return this[n] || null; };
+          list.getNamedItem = function (n) {
+            for (var k = 0; k < this.length; k++) if (this[k].name === n) return this[k];
+            return null;
+          };
+          return list;
+        }
+      });
+    } catch (e) { /* 定義できない engine では諦める */ }
+  });
+  addMethod('getRootNode', function () {
+    var n = this;
+    while (n && n.parentNode) n = n.parentNode;
+    return n;
+  });
+  addMethod('remove', function () {
+    if (this.parentNode && typeof this.parentNode.removeChild === 'function') {
+      this.parentNode.removeChild(this);
+    }
+  });
+  addMethod('replaceWith', function (node) {
+    if (this.parentNode && typeof this.parentNode.replaceChild === 'function') {
+      this.parentNode.replaceChild(node, this);
+    }
+  });
+
+  // compareDocumentPosition。React は containsNode でこれを使う。
+  // 返すのは DOCUMENT_POSITION_CONTAINED_BY (16) と _CONTAINS (8) だけ
+  addMethod('compareDocumentPosition', function (other) {
+    if (!other || other === this) return 0;
+    var up = other.parentNode;
+    while (up) { if (up === this) return 20; up = up.parentNode; }
+    up = this.parentNode;
+    while (up) { if (up === other) return 10; up = up.parentNode; }
+    return 1;
+  });
+
+  // イベントを投げる口。listener の台帳は engine 側が持っているので、
+  // ここでは「投げられる」ことだけ保証する (何も起きなくても止まらない)
+  addMethod('dispatchEvent', function () { return true; });
+  addMethod('click', function () {
+    if (typeof this.dispatchEvent === 'function') {
+      this.dispatchEvent({ type: 'click', target: this, bubbles: true });
+    }
+    return undefined;
+  });
+  if (typeof w.dispatchEvent !== 'function') w.dispatchEvent = function () { return true; };
+
+  if (d && typeof d.createEvent !== 'function') {
+    d.createEvent = function (kind) {
+      return {
+        type: '', bubbles: false, cancelable: false, target: null, kind: kind,
+        initEvent: function (t, b, c) { this.type = t; this.bubbles = !!b; this.cancelable = !!c; },
+        preventDefault: function () {}, stopPropagation: function () {}
+      };
+    };
+  }
+
+  if (typeof w.getComputedStyle !== 'function') {
+    w.getComputedStyle = function (el) {
+      var st = el && el.style ? el.style : {};
+      if (typeof st.getPropertyValue !== 'function') {
+        st.getPropertyValue = function (n) { return this[n] == null ? '' : String(this[n]); };
+      }
+      return st;
+    };
+  }
+  if (typeof w.scrollTo !== 'function') w.scrollTo = function () {};
+
+  // document.location。Next.js のルータが document.location.hostname を読む。
+  // 無いと unhandled promise rejection になって遷移の初期化が止まる
+  if (d && d.location == null && w.location) {
+    try { d.location = w.location; } catch (e) {
+      try { Object.defineProperty(d, 'location', { configurable: true, get: function () { return w.location; } }); }
+      catch (e2) { /* 諦める */ }
+    }
+  }
+
+  // document.title。engine 側が読み取り専用で持っていることがある。
+  // Next.js は毎回代入するので、代入できないと head の更新が全部止まる
+  if (d) {
+    var titleOk = false;
+    try { d.title = String(d.title == null ? '' : d.title); titleOk = true; } catch (e) { titleOk = false; }
+    if (!titleOk) {
+      try {
+        var kept = '';
+        try { kept = String(d.title == null ? '' : d.title); } catch (e3) { kept = ''; }
+        Object.defineProperty(d, 'title', {
+          configurable: true,
+          get: function () { return kept; },
+          set: function (v) {
+            kept = String(v == null ? '' : v);
+            // <title> 要素があれば中身も合わせる (絵には出ないが、読む側のため)
+            try {
+              var el = d.querySelector ? d.querySelector('title') : null;
+              if (el) el.textContent = kept;
+            } catch (e4) { /* 無ければそのまま */ }
+          }
+        });
+      } catch (e5) { /* 定義もできないなら諦める */ }
+    }
+  }
+
+  // console.error / console.warn を控えておく。
+  //
+  // React はハイドレーションの不一致を **例外ではなく console.error** で知らせる
+  // (onRecoverableError の既定がこれ)。production ビルドだと文言は縮められて
+  // いるが、エラー番号の URL が付くので何が起きたかは特定できる。
+  // 絵にも JS のエラー一覧にも出ないので、ここで溜めて後から読めるようにする
+  w.__consoleErrors = [];
+  (function () {
+    var base = w.console || {};
+    var keep = function (level, orig) {
+      return function () {
+        try {
+          var parts = [];
+          for (var i = 0; i < arguments.length; i++) {
+            var a = arguments[i];
+            if (typeof a === 'string') { parts.push(a); continue; }
+            if (a && a.message) {
+              // 呼べなかったのが何なのかは stack にしか出ない
+              parts.push(String(a.name) + ': ' + String(a.message));
+              if (a.stack) {
+                // ここは template literal の中。バックスラッシュを書くと
+                // 文字列になる前に潰れるので、エスケープを使わない形にする
+                var NL = String.fromCharCode(10);
+                parts.push('@ ' + String(a.stack).split(NL).slice(0, 4).map(function (l) {
+                  return l.trim();
+                }).join(' < '));
+              }
+              continue;
+            }
+            parts.push(String(a));
+          }
+          if (w.__consoleErrors.length < 32) w.__consoleErrors.push(level + ': ' + parts.join(' '));
+        } catch (e) { /* 控えるだけなので落とさない */ }
+        if (typeof orig === 'function') { try { orig.apply(base, arguments); } catch (e) {} }
+      };
+    };
+    if (!base.error || !base.error.__kept) {
+      var e2 = keep('error', base.error);
+      e2.__kept = true;
+      base.error = e2;
+    }
+    if (!base.warn || !base.warn.__kept) {
+      var w2 = keep('warn', base.warn);
+      w2.__kept = true;
+      base.warn = w2;
+    }
+    w.console = base;
+  })();
+
   // setImmediate / MessageChannel。
   //
   // React 18 のスケジューラは、仕事をマクロタスクに逃がすときに

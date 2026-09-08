@@ -522,6 +522,8 @@ export default {
         t = Date.now();
         const { rgba, report } = await renderInBoaWorker(env, request, {
           html, baseUrl, width: w, height: h, fonts, generics: GENERIC_LEAD,
+          // 白紙の原因を追うための口。document の中に書かせて絵に焼く
+          probe: url.searchParams.get('probe') ?? null,
           id: url.searchParams.get('fresh') ? `boa:fresh:${Math.random()}` : `boa:${w}x${h}`,
         });
         timing.pageScriptMs = Date.now() - t;

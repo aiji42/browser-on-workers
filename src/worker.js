@@ -119,6 +119,10 @@ async function overLimit(env, request, bucket) {
 // 渡せる HTML の大きさ。これ以上は描く前に断る
 const MAX_INLINE_HTML = 512 * 1024;
 
+// 1 リクエストで wasm のメモリに載せる画素の合計。<img> と取りこぼしの回収で通算する。
+// 経路ごとに分けて数えると、合わせたときに isolate のメモリを超える
+const DECODED_BUDGET = 48 * 1024 * 1024;
+
 // 絵が 1 色だけかを見る。3.2 MB を全部なめる必要は無いので、間を飛ばして数える。
 // 1 色だけなら、描けなかったのと同じ
 function isBlank(rgba) {
@@ -286,7 +290,11 @@ export default {
       for (const img of imgs.images) add_resource(img.url, img.bytes);
       timing.subresourceMs = Date.now() - t;
       timing.css = { fetched: sheets.sheets.length, skipped: sheets.skipped, bytes: sheets.bytes };
-      timing.img = { fetched: imgs.images.length, skipped: imgs.skipped, bytes: imgs.bytes };
+      timing.img = {
+        fetched: imgs.images.length, skipped: imgs.skipped,
+        // 展開後が大きすぎて断った枚数。ここを通すと wasm のメモリ確保が失敗する
+        tooBig: imgs.tooBig, bytes: imgs.bytes, decodedBytes: imgs.decodedBytes,
+      };
 
       // base URL を渡す。blitz-dom は <link href="/x.css"> のような相対参照を
       // これに対して解決する。無いと (base になれない data: URL が既定なので) panic する
@@ -302,6 +310,8 @@ export default {
       timing.renderMs = 0;
       timing.recoverFetchMs = 0;
       t = Date.now();
+      let decodedLeft = Math.max(0, DECODED_BUDGET - (imgs.decodedBytes ?? 0));
+
       let rgba = render(html, baseUrl, width, height);
       timing.renderMs += Date.now() - t;
       timing.passes = 1;
@@ -310,15 +320,18 @@ export default {
         const missed = missed_resources();
         if (!missed.length) break;
         t = Date.now();
-        const more = await fetchResources(missed, base, deny);
+        const more = await fetchResources(missed, base, deny, decodedLeft);
         timing.recoverFetchMs += Date.now() - t;
+        decodedLeft = Math.max(0, decodedLeft - (more.decodedBytes ?? 0));
         if (!more.got.length) break;
         for (const r of more.got) add_resource(r.url, r.bytes);
         t = Date.now();
         rgba = render(html, baseUrl, width, height);
         timing.renderMs += Date.now() - t;
         timing.passes++;
-        timing.recovered.push({ asked: missed.length, got: more.got.length, bytes: more.bytes });
+        timing.recovered.push({
+          asked: missed.length, got: more.got.length, bytes: more.bytes, tooBig: more.tooBig,
+        });
       }
 
       // ページの JS が DOM を壊して真っ白になることがある。

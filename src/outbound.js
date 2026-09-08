@@ -124,6 +124,11 @@ export async function fetchStylesheets(html, baseUrl, deny = () => false) {
 
 const MAX_IMAGES = 24;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+// 展開後の画素の大きさで断るための上限。
+// 1 枚が大きすぎると wasm のメモリ確保に失敗して panic するので、
+// 1 枚ごと (画素数) と全部の合計 (バイト数) の 2 つで見る
+const MAX_IMAGE_PIXELS = 8_000_000;               // 8 メガピクセル = 32 MB
+const MAX_DECODED_BYTES = 48 * 1024 * 1024;
 const IMAGE_TIMEOUT_MS = 5000;
 
 /** <img> の src と srcset、<source> の srcset から URL を集める */
@@ -176,14 +181,23 @@ export async function fetchImages(html, baseUrl, deny = () => false) {
 
   const images = [];
   let bytes = 0;
+  let decoded = 0;
   let skipped = 0;
+  let tooBig = 0;
   for (const g of got) {
     if (!g) { skipped++; continue; }
     if (bytes + g.bytes.length > MAX_IMAGE_BYTES) { skipped++; continue; }
+    // 展開後の大きさで断る。ここを通すと wasm 側で panic する
+    const size = imageSize(g.bytes);
+    if (size) {
+      const px = size.width * size.height;
+      if (px > MAX_IMAGE_PIXELS || decoded + px * 4 > MAX_DECODED_BYTES) { tooBig++; continue; }
+      decoded += px * 4;
+    }
     bytes += g.bytes.length;
     images.push(g);
   }
-  return { images, skipped, bytes };
+  return { images, skipped, tooBig, bytes, decodedBytes: decoded };
 }
 
 
@@ -198,7 +212,7 @@ const MAX_MISS_COUNT = 96;
 const MISS_TIMEOUT_MS = 5000;
 
 /** 任意の URL をまとめて取得する。種類 (CSS / 画像 / フォント) は問わない */
-export async function fetchResources(urls, baseUrl, deny = () => false) {
+export async function fetchResources(urls, baseUrl, deny = () => false, decodedBudget = MAX_DECODED_BYTES) {
   // 上限に当たったときにどれを捨てるかが効く。react.dev は 66 本要求してきて、
   // 上限 64 で落ちた 2 本が Next.js の manifest だった。それが無いと起動の
   // スクリプトが例外を投げ、ページが白くなる。
@@ -234,12 +248,85 @@ export async function fetchResources(urls, baseUrl, deny = () => false) {
 
   const got = [];
   let bytes = 0;
+  let decoded = 0;
   let skipped = 0;
+  let tooBig = 0;
   for (const r of results) {
     if (!r) { skipped++; continue; }
     if (bytes + r.bytes.length > MAX_MISS_BYTES) { skipped++; continue; }
+    // CSS の url() から来る画像もここを通る。1 枚で 87 MB に展開されるものがあるので、
+    // <img> と同じ基準で断る (通すと wasm のメモリ確保が失敗して panic する)
+    const size = imageSize(r.bytes);
+    if (size) {
+      const px = size.width * size.height;
+      if (px > MAX_IMAGE_PIXELS || decoded + px * 4 > decodedBudget) { tooBig++; continue; }
+      decoded += px * 4;
+    }
     bytes += r.bytes.length;
     got.push(r);
   }
-  return { got, skipped, bytes };
+  return { got, skipped, tooBig, bytes, decodedBytes: decoded };
+}
+
+/**
+ * 画像の先頭から幅と高さを読む。分からなければ null。
+ *
+ * デコード後の画素は幅 × 高さ × 4 バイトになるので、圧縮されたファイルの
+ * 大きさでは足りない。5263 KB の JPEG が 24 枚あっても平気だが、その中の
+ * 1 枚が 87 MB に展開されると wasm のメモリ確保が失敗して panic する
+ * (image クレートの `TryReserveError`)。だから展開後の大きさで先に断る。
+ */
+export function imageSize(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const u8 = bytes;
+  const at = (i) => u8[i];
+
+  // PNG: 8 バイトの署名のあと IHDR (幅と高さが 4 バイトずつ)
+  if (u8.length > 24 && at(0) === 0x89 && at(1) === 0x50 && at(2) === 0x4e && at(3) === 0x47) {
+    return { width: dv.getUint32(16), height: dv.getUint32(20) };
+  }
+
+  // GIF: "GIF8" のあと 2 バイトずつ (little endian)
+  if (u8.length > 10 && at(0) === 0x47 && at(1) === 0x49 && at(2) === 0x46) {
+    return { width: dv.getUint16(6, true), height: dv.getUint16(8, true) };
+  }
+
+  // WebP: RIFF....WEBP のあと VP8 / VP8L / VP8X で持ち方が違う
+  if (u8.length > 30 && at(0) === 0x52 && at(8) === 0x57 && at(9) === 0x45 && at(10) === 0x42) {
+    const fourcc = String.fromCharCode(at(12), at(13), at(14), at(15));
+    if (fourcc === 'VP8 ') {
+      return { width: dv.getUint16(26, true) & 0x3fff, height: dv.getUint16(28, true) & 0x3fff };
+    }
+    if (fourcc === 'VP8L') {
+      const b = dv.getUint32(21, true);
+      return { width: (b & 0x3fff) + 1, height: ((b >> 14) & 0x3fff) + 1 };
+    }
+    if (fourcc === 'VP8X') {
+      const w = at(24) | (at(25) << 8) | (at(26) << 16);
+      const h = at(27) | (at(28) << 8) | (at(29) << 16);
+      return { width: w + 1, height: h + 1 };
+    }
+    return null;
+  }
+
+  // JPEG: SOI のあとマーカーを辿って SOF を探す
+  if (u8.length > 4 && at(0) === 0xff && at(1) === 0xd8) {
+    let i = 2;
+    while (i + 9 < u8.length) {
+      if (at(i) !== 0xff) { i++; continue; }
+      const marker = at(i + 1);
+      // スタンドアロンのマーカー (長さを持たない)
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { i += 2; continue; }
+      const len = dv.getUint16(i + 2);
+      // SOF0..SOF3 / SOF5..SOF7 / SOF9..SOF11 / SOF13..SOF15
+      const isSof = marker >= 0xc0 && marker <= 0xcf
+        && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+      if (isSof) return { width: dv.getUint16(i + 7), height: dv.getUint16(i + 5) };
+      if (marker === 0xda) break;   // 画素の始まり。ここまでに無ければ諦める
+      i += 2 + len;
+    }
+    return null;
+  }
+
+  return null;   // SVG など。展開後の大きさが分からないものは通す
 }

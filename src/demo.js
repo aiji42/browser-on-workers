@@ -7,38 +7,76 @@
 const CSS = `
 :root{
   --ink:#111; --muted:#666; --line:#e5e5e5; --paper:#fafafa;
-  --accent:#0b5cd6; --orange:#f38020;
+  --accent:#0b5cd6; --orange:#f38020; --ok:#0a7a2f;
 }
 *{box-sizing:border-box}
 body{
-  margin:0; padding:0 20px 80px;
+  margin:0; padding:0 20px 90px;
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
   color:var(--ink); line-height:1.75; background:#fff;
 }
-.wrap{max-width:900px; margin:0 auto}
-header{padding:56px 0 28px; border-bottom:1px solid var(--line)}
-h1{margin:0 0 10px; font-size:30px; line-height:1.3; letter-spacing:-.01em}
+.wrap{max-width:940px; margin:0 auto}
+header{padding:56px 0 26px}
+h1{margin:0 0 12px; font-size:32px; line-height:1.28; letter-spacing:-.015em}
 h1 span{color:var(--accent)}
-.lede{margin:0; font-size:16px; color:var(--muted)}
+.lede{margin:0; font-size:16px; color:#444; max-width:64ch}
 .tag{
-  display:inline-block; margin-bottom:18px; padding:3px 9px;
+  display:inline-block; margin-bottom:20px; padding:4px 10px;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px;
-  letter-spacing:.08em; color:#fff; background:var(--ink);
+  letter-spacing:.1em; color:#fff; background:var(--ink);
 }
-h2{margin:44px 0 12px; font-size:19px; letter-spacing:-.01em}
+h2{
+  margin:54px 0 8px; font-size:19px; letter-spacing:-.01em; color:var(--ink);
+  border-top:1px solid var(--line); padding-top:22px;
+}
+h2 + p{margin-top:10px}
 p{margin:0 0 14px}
 code{
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.88em;
   background:#eef3fb; color:#0a4aa8; padding:.1em .35em;
 }
-figure{margin:0 0 8px; border:1px solid var(--line); background:var(--paper); padding:10px}
-figure img{display:block; width:100%; height:auto; border:1px solid var(--line); background:#fff}
-figcaption{
-  margin-top:8px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-  font-size:11px; color:var(--muted); letter-spacing:.03em;
+a{color:var(--accent)}
+
+/* 描いた画像の枠。ここが「疑似 Kitesurf の出力」だと一目で分かるようにする */
+.shot{margin:0 0 26px; border:1px solid var(--ink)}
+.shot .bar{
+  display:flex; align-items:center; gap:9px; flex-wrap:wrap;
+  background:var(--ink); color:#fff; padding:8px 12px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px; letter-spacing:.04em;
 }
-.grid{display:flex; flex-wrap:wrap; gap:14px}
-.grid figure{flex:1 1 400px; margin:0}
+.shot .bar b{color:#7fb2ff; font-weight:400}
+.shot .bar .sp{margin-left:auto; color:#9a9a9a}
+.shot .dot{
+  width:8px; height:8px; border-radius:50%; background:#33d17a; flex:none;
+}
+.shot .body{background:var(--paper); padding:10px}
+.shot img{display:block; width:100%; height:auto; border:1px solid var(--line); background:#fff}
+.shot figcaption{
+  border-top:1px solid var(--line); padding:9px 12px; font-size:12.5px; color:var(--muted);
+}
+.shot figcaption b{color:var(--ink); font-weight:600}
+
+/* 自分で試す欄 */
+form{
+  display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+  border:1px solid var(--line); background:var(--paper); padding:14px;
+}
+input[type=url]{
+  flex:1 1 380px; padding:10px 11px; font-size:14px;
+  border:1px solid #ccc; background:#fff; color:var(--ink);
+}
+input[type=number]{width:84px; padding:10px 11px; font-size:14px; border:1px solid #ccc}
+button{
+  padding:10px 22px; font-size:14px; font-weight:700; color:#fff;
+  background:var(--accent); border:0; cursor:pointer;
+}
+button[disabled]{background:#9bb8e4; cursor:default}
+.hint{font-size:12.5px; color:var(--muted); margin:8px 0 0}
+#out{margin-top:18px}
+#out .msg{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px;
+  color:var(--muted); border-left:3px solid var(--orange); padding:4px 0 4px 12px;
+}
 table{border-collapse:collapse; width:100%; font-size:14px; margin:0 0 14px}
 th,td{text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top}
 thead th{
@@ -46,27 +84,9 @@ thead th{
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; letter-spacing:.08em;
 }
 td:first-child{white-space:nowrap; color:var(--muted)}
-form{
-  display:flex; flex-wrap:wrap; gap:8px; align-items:center;
-  border:1px solid var(--line); background:var(--paper); padding:14px;
-}
-input[type=url]{
-  flex:1 1 380px; padding:9px 11px; font-size:14px;
-  border:1px solid #ccc; background:#fff; color:var(--ink);
-}
-input[type=number]{width:82px; padding:9px 11px; font-size:14px; border:1px solid #ccc}
-button{
-  padding:9px 20px; font-size:14px; font-weight:700; color:#fff;
-  background:var(--accent); border:0; cursor:pointer;
-}
-.note{
-  border-left:3px solid var(--orange); padding:2px 0 2px 14px;
-  color:var(--muted); font-size:14px; margin:0 0 14px;
-}
 ul{margin:0 0 14px; padding-left:22px}
 li{margin:0 0 5px}
-a{color:var(--accent)}
-footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--line); font-size:13px; color:var(--muted)}
+footer{margin-top:60px; padding-top:18px; border-top:1px solid var(--line); font-size:13px; color:var(--muted)}
 `;
 
 /** X などに貼ったときの見せ札。外部資源を持たないので単体で描ける */
@@ -170,20 +190,39 @@ JavaScript がそこで止まるので、この枠は書き換わりません。
 /**
  * トップページが貼っている、外のサイトの絵。
  *
- * この一覧に載っている URL だけが緩いレートリミットを使える。`demo=1` を
- * 付けるだけで緩くなると、その口から好きな URL を撮られてしまう
+ * この一覧に載っている URL と大きさだけが緩いレートリミットを使える。`demo=1` を
+ * 付けるだけで緩くなると、その口から好きな URL を撮られてしまう。
+ *
+ * [URL, 幅, 高さ, 見出し, 説明]
  */
 export const DEMO_SHOTS = [
-  ['https://ja.wikipedia.org/wiki/メインページ', 900, 700, 'ja.wikipedia.org — 日本語、2 カラム、写真'],
-  ['https://developer.mozilla.org/en-US/', 900, 700, 'developer.mozilla.org — CSS 20 枚'],
+  [
+    'https://ja.wikipedia.org/wiki/メインページ', 1000, 780,
+    'ja.wikipedia.org',
+    '日本語の見出しと本文、2 カラム、写真 24 枚。CSS は 3 枚で 231 KB',
+  ],
+  [
+    'https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map', 1000, 780,
+    'developer.mozilla.org',
+    'CSS 20 枚。本文中の <code>map()</code> が等幅で出ている。JS は 938 KB 実行してエラー 0 件',
+  ],
+  [
+    'https://react.dev/', 1000, 780,
+    'react.dev',
+    'ページの JS を動かすと React のハイドレーションが本文を消すので、JS を切って描き直したもの',
+  ],
 ];
 
 /** デモのトップページ。origin は自分の URL (自己参照の画像に使う) */
 export function demoHtml(origin) {
-  // demo=1 を付けたものは、このサイトが自分で貼っている決まった絵。
-  // 緩い方のレートリミットで数え、edge にキャッシュさせる
-  const shot = (url, w, h) =>
+  const shotUrl = (url, w, h) =>
     `${origin}/shot?demo=1&w=${w}&h=${h}&url=${encodeURIComponent(url)}`;
+
+  const shot = ([url, w, h, title, note]) => `<figure class="shot">
+  <div class="bar"><span class="dot"></span>この画像は <b>Chromium を使わずに</b>描いています<span class="sp">${w}×${h}</span></div>
+  <div class="body"><img src="${shotUrl(url, w, h)}" width="${w}" height="${h}" alt="${title} を描いた画像"></div>
+  <figcaption><b>${title}</b> — ${note}<br><a href="${url}">${url}</a></figcaption>
+</figure>`;
 
   return `<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
@@ -200,46 +239,33 @@ export function demoHtml(origin) {
 <header>
   <span class="tag">CLOUDFLARE WORKERS</span>
   <h1>Chromium なしで、<span>スクリーンショット</span>を撮る</h1>
-  <p class="lede">HTML のパースから JavaScript の実行まで、すべて Worker の isolate の中で動いています。</p>
+  <p class="lede">Rust で書いたブラウザエンジンを Wasm にして、Cloudflare Workers の isolate の中で動かしています。ブラウザのバイナリはどこにもありません。以下の画像は全部、この Worker が描いたものです。</p>
 </header>
 
-<h2>このブラウザが描いた絵</h2>
-<p>下の画像は、いまこのページを配信している Worker が、その中の Wasm で描いたものです。Chromium のバイナリはどこにもありません。</p>
+<h2>実際のサイトを描く</h2>
+${DEMO_SHOTS.map(shot).join('\n')}
 
-<figure>
-  <img src="${origin}/card.png" width="1200" height="630"
-       alt="browser-on-workers の見せ札を、このブラウザ自身が描いた画像">
-  <figcaption>この PNG は、このページを配信している Worker が Wasm で描いたもの</figcaption>
-</figure>
+<h2>自分で試す</h2>
+<p>好きな URL を入れてください。この場に画像が出ます。</p>
+<form id="f">
+  <input type="url" id="u" value="https://example.com/" placeholder="https://..." required>
+  <input type="number" id="w" value="1000" min="64" max="2000" aria-label="幅">
+  <input type="number" id="h" value="800" min="64" max="4000" aria-label="高さ">
+  <button type="submit" id="go">撮る</button>
+</form>
+<p class="hint">外部 CSS と画像は Worker が取ってきてエンジンに渡します。重いページは 10 秒ほどかかります。10 秒で 4 枚までにしています。</p>
+<div id="out"></div>
 
 <h2>JavaScript も動く</h2>
 <p>ページの <code>&lt;script&gt;</code> を <a href="https://boajs.dev">Boa</a> (Rust で書かれた JavaScript エンジン) で実行しています。Workers は <code>eval</code> と <code>new Function</code> を禁じていますが、Boa が自分でコンパイルするので、<strong>ページの中の <code>eval</code> は通ります</strong>。</p>
 
-<figure>
-  <img src="${origin}/js.png" width="760" height="560"
-       alt="JavaScript が DOM を書き換えたことを示すページを、このブラウザ自身が描いた画像">
-  <figcaption>緑の枠はページの JavaScript が書いたもの。<a href="/js">同じページを自分のブラウザで開く</a>と、書き換わった中身が一致します (書体は違います)</figcaption>
+<figure class="shot">
+  <div class="bar"><span class="dot"></span>この画像は <b>Chromium を使わずに</b>描いています<span class="sp">760×560</span></div>
+  <div class="body"><img src="${origin}/js.png" width="760" height="560" alt="JavaScript が DOM を書き換えたことを示すページを描いた画像"></div>
+  <figcaption><b>緑の枠はページの JavaScript が書いたもの</b> — 最後の枠だけは <code>while (true)</code> が実行上限に当たって書き換わりません。それより前に書いた 5 つは残ります<br><a href="/js">同じページを自分のブラウザで開く</a></figcaption>
 </figure>
 
-<p class="note">V8 と Boa が同じ isolate に同居する形になります。Worker のコードは V8 で動き、ページのコードは Wasm の中の Boa で動く。Kitesurf も同じ構造です。</p>
-
-<h2>実際のサイトを描く</h2>
-<div class="grid">
-${DEMO_SHOTS.map(([u, w, h, caption]) => `  <figure>
-    <img src="${shot(u, w, h)}" width="${w}" height="${h}"
-         alt="${caption.split(' — ')[0]} を描いた画像">
-    <figcaption>${caption}</figcaption>
-  </figure>`).join('\n')}
-</div>
-
-<h2>自分で試す</h2>
-<form action="/shot" method="get">
-  <input type="url" name="url" value="https://example.com/" placeholder="https://..." required>
-  <input type="number" name="w" value="1000" min="64" max="2000" aria-label="幅">
-  <input type="number" name="h" value="800" min="64" max="4000" aria-label="高さ">
-  <button type="submit">撮る</button>
-</form>
-<p class="note">外部 CSS と画像は Worker が取ってきてエンジンに渡します。取得に数秒かかることがあります。</p>
+<p>V8 と Boa が同じ isolate に同居する形になります。Worker のコードは V8 で動き、ページのコードは Wasm の中の Boa で動く。Cloudflare の <a href="https://blog.cloudflare.com/kitesurf/">Kitesurf</a> も同じ構造です。</p>
 
 <h2>中身</h2>
 <table>
@@ -253,17 +279,18 @@ ${DEMO_SHOTS.map(([u, w, h, caption]) => `  <figure>
     <tr><td>描画</td><td>blitz-paint + vello_cpu</td></tr>
     <tr><td>JavaScript</td><td>Boa (blitz-vibey-script 経由)</td></tr>
     <tr><td>PNG 化</td><td>自前。Workers に画像の API が無いので</td></tr>
+    <tr><td>フォント</td><td>Static Assets に置いて起動時に読む</td></tr>
     <tr><td>外向きの取得</td><td>Worker の <code>fetch()</code> 1 箇所だけ</td></tr>
   </tbody>
 </table>
-<p>Rust を <code>wasm32-unknown-unknown</code> にビルドして Worker から呼んでいます。Wasm は 15 MB ほど。フォントは Static Assets に置いて、起動時に読んでいます。</p>
+<p>Rust を <code>wasm32-unknown-unknown</code> にビルドして Worker から呼んでいます。Wasm は 15 MB ほど。</p>
 
 <h2>できないこと</h2>
-<p>スクリーンショットを撮るところまでを目標にしているので、実用のブラウザではありません。</p>
 <ul>
   <li>フォントに入れた文字しか出ません。いまは Latin と、ひらがな・カタカナ・漢字</li>
+  <li>ページの JavaScript には実行上限があります。<code>while (true)</code> は 27 ms ほどで止まります</li>
+  <li>展開すると大きすぎる画像は飛ばします。1 枚で 87 MB になる画像があり、isolate のメモリに載りません</li>
   <li>動くもの (アニメーション、動画、WebGL) は扱いません</li>
-  <li>ページの JavaScript には実行上限があります。<code>while (true)</code> は 27 ms ほどで止まります (止まるまでに書き換えた DOM はそのまま描かれます)</li>
   <li>レイアウトが返ってこないページがまだあります</li>
 </ul>
 
@@ -271,5 +298,55 @@ ${DEMO_SHOTS.map(([u, w, h, caption]) => `  <figure>
   Rust で書いたブラウザエンジンを Wasm にして Cloudflare Workers の V8 isolate で動かす、という Cloudflare の Kitesurf を見て、同じ構成を公開情報だけから組んでみたものです。
 </footer>
 
-</div></body></html>`;
+</div>
+<script>
+// 自分で試す欄。この場に画像を出す。
+// このページを自分自身で描くこともあるので、失敗しても本文が壊れないようにしておく
+try {
+  var f = document.getElementById('f');
+  var out = document.getElementById('out');
+  var go = document.getElementById('go');
+  f.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var url = document.getElementById('u').value;
+    var w = document.getElementById('w').value || 1000;
+    var h = document.getElementById('h').value || 800;
+    go.disabled = true;
+    out.innerHTML = '<p class="msg">' + url + ' を描いています…</p>';
+    var src = '/shot?w=' + w + '&h=' + h + '&url=' + encodeURIComponent(url) + '&cb=' + Date.now();
+    var t0 = Date.now();
+    fetch(src).then(function (res) {
+      var ms = Date.now() - t0;
+      if (!res.ok) {
+        return res.text().then(function (body) {
+          out.innerHTML = '<p class="msg">' + res.status + ' で描けませんでした。<br>'
+            + body.slice(0, 400).replace(/[<&]/g, '') + '</p>';
+        });
+      }
+      var timing = {};
+      try { timing = JSON.parse(res.headers.get('x-timing') || '{}'); } catch (err) {}
+      return res.blob().then(function (blob) {
+        var img = URL.createObjectURL(blob);
+        var meta = [
+          'CSS ' + ((timing.css || {}).fetched || 0) + ' 枚',
+          '画像 ' + ((timing.img || {}).fetched || 0) + ' 枚',
+          (timing.passes || 1) + ' パス',
+          Math.round(ms / 100) / 10 + ' 秒',
+        ];
+        if (timing.usedNoJs) meta.push('JS を切って描き直した');
+        else if (timing.jsErrors) meta.push('JS のエラー ' + timing.jsErrors + ' 件');
+        out.innerHTML = '<figure class="shot">'
+          + '<div class="bar"><span class="dot"></span>この画像は <b>Chromium を使わずに</b>描いています'
+          + '<span class="sp">' + w + '×' + h + '</span></div>'
+          + '<div class="body"><img src="' + img + '" alt="' + url + ' を描いた画像"></div>'
+          + '<figcaption><b>' + meta.join(' · ') + '</b><br>' + url.replace(/[<&]/g, '') + '</figcaption>'
+          + '</figure>';
+      });
+    }).catch(function (err) {
+      out.innerHTML = '<p class="msg">失敗しました: ' + String(err && err.message) + '</p>';
+    }).then(function () { go.disabled = false; });
+  });
+} catch (err) { /* エンジン側に addEventListener が無くても本文は出る */ }
+</script>
+</body></html>`;
 }

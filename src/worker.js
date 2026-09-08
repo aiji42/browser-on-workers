@@ -119,6 +119,16 @@ async function overLimit(env, request, bucket) {
 // 渡せる HTML の大きさ。これ以上は描く前に断る
 const MAX_INLINE_HTML = 512 * 1024;
 
+// 絵が 1 色だけかを見る。3.2 MB を全部なめる必要は無いので、間を飛ばして数える。
+// 1 色だけなら、描けなかったのと同じ
+function isBlank(rgba) {
+  const first = rgba.subarray(0, 4).join(',');
+  for (let i = 0; i < rgba.length; i += 4 * 997) {
+    if (rgba.subarray(i, i + 4).join(',') !== first) return false;
+  }
+  return true;
+}
+
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 800;
 
@@ -309,6 +319,18 @@ export default {
         timing.renderMs += Date.now() - t;
         timing.passes++;
         timing.recovered.push({ asked: missed.length, got: more.got.length, bytes: more.bytes });
+      }
+
+      // ページの JS が DOM を壊して真っ白になることがある。
+      // react.dev はハイドレーションの途中で例外が出ると本文が消える。
+      // 白いだけの絵を返すより、JS を切って描き直したほうが役に立つ
+      if (runJs && isBlank(rgba)) {
+        t = Date.now();
+        const retry = render_png_rgba_no_js(html, baseUrl, width, height);
+        timing.renderMs += Date.now() - t;
+        timing.blankWithJs = true;
+        timing.usedNoJs = !isBlank(retry);
+        if (timing.usedNoJs) rgba = retry;
       }
       // JS が途中で死んでいても絵は出る。何が起きたのかはヘッダで返す
       // (ヘッダの長さに限りがあるので、頭を少しだけ)

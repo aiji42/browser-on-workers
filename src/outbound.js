@@ -194,15 +194,28 @@ export async function fetchImages(html, baseUrl, deny = () => false) {
 // 「描く → 取りこぼしを取る → 描き直す」を何周か回すことになる。
 
 const MAX_MISS_BYTES = 8 * 1024 * 1024;
+const MAX_MISS_COUNT = 96;
 const MISS_TIMEOUT_MS = 5000;
 
 /** 任意の URL をまとめて取得する。種類 (CSS / 画像 / フォント) は問わない */
 export async function fetchResources(urls, baseUrl, deny = () => false) {
+  // 上限に当たったときにどれを捨てるかが効く。react.dev は 66 本要求してきて、
+  // 上限 64 で落ちた 2 本が Next.js の manifest だった。それが無いと起動の
+  // スクリプトが例外を投げ、ページが白くなる。
+  // 絵が 1 枚欠けるより、スクリプトやスタイルが欠けるほうが壊れるので先に取る
+  const rank = (u) => {
+    const path = u.split('?')[0].toLowerCase();
+    if (/\.(js|mjs|css)$/.test(path)) return 0;
+    if (/\.(woff2?|ttf|otf)$/.test(path)) return 1;
+    if (/\.(png|jpe?g|gif|webp|svg|avif|ico)$/.test(path)) return 3;
+    return 2;   // 拡張子から分からないもの (API や動的な JS)
+  };
   const targets = urls
     .filter((u) => /^https?:/.test(u))
     .filter((u) => !u.startsWith('https://inline.invalid/')) // base が無いときの見せかけの URL
     .filter((u) => !deny(u))
-    .slice(0, 64);
+    .sort((a, b) => rank(a) - rank(b))
+    .slice(0, MAX_MISS_COUNT);
   if (!targets.length) return { got: [], skipped: 0, bytes: 0 };
 
   const results = await Promise.all(targets.map(async (url) => {

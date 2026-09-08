@@ -414,6 +414,32 @@ mod tests {
         }
     }
 
+    /// `@font-face` の web font も表から返る。ここでは `fonts/` の TTF を使うが、
+    /// woff2 でも描けることは確認した (blitz-dom の `woff` feature が既定で入っていて、
+    /// wuff が Rust の中で Brotli をほどく。JS 側で woff2 を扱えないのとは別の話)
+    #[test]
+    fn web_font_from_table_is_used() {
+        let (w, h) = (300u32, 80u32);
+        let html = r#"<html><head><style>
+            @font-face { font-family: probe; src: url(/f.ttf) format("truetype") }
+            body { margin: 0 } p { margin: 0; font-size: 40px; font-family: probe }
+            </style></head><body><p>Hello</p></body></html>"#;
+        let Ok(ttf) = std::fs::read("../fonts/sans-regular.ttf") else { return };
+
+        // フォントは 1 本も登録していないので、表から届かなければ 1 画素も塗られない
+        let served = render_with(
+            html,
+            "https://x.test/",
+            no_fonts(),
+            net(&[("https://x.test/f.ttf", ttf)]),
+            w,
+            h,
+        );
+        let missing = render_with(html, "https://x.test/", no_fonts(), TableNetProvider::empty(), w, h);
+        assert_eq!(inked(&missing, w, h), 0, "no font, no glyphs");
+        assert!(inked(&served, w, h) > 200, "web font should paint glyphs");
+    }
+
     /// 資源を渡さないときに、実ページが**白いまま**になっていないこと。
     ///
     /// この実装を入れると `<head>` の `<link rel="stylesheet">` が

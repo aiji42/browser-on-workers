@@ -26,16 +26,34 @@ Cloudflare が 2026 年 8 月に [Kitesurf](https://blog.cloudflare.com/kitesurf
 | レイアウト | [Taffy](https://github.com/DioxusLabs/taffy) |
 | テキスト整形 | [Parley](https://github.com/linebender/parley) |
 | 描画 | [blitz-paint](https://github.com/DioxusLabs/blitz) |
+| 画像のデコード | [image](https://github.com/image-rs/image) (blitz-dom 経由) |
 | PNG 化 | 自前 (`src/png.js`)。Workers に画像の API が無いので |
-| 外向きの取得 | Worker の `fetch()` 1 箇所だけ |
+| 外向きの取得 | Worker の `fetch()` 1 箇所だけ (`src/outbound.js`) |
 
 Rust 側は wasm32-unknown-unknown 向けにビルドして wasm-bindgen で JS から呼ぶ。
+
+## 描けるもの
+
+`ja.wikipedia.org` のメインページ。日本語、2 カラム、写真、アイコンが出る。
+
+![ja.wikipedia.org](docs/ja-wikipedia-images.png)
+
+外部 CSS と画像は Worker が取ってきて engine に渡している。Blitz 自身は
+サブリソースを取りに行かないので、ネットワークは Worker 側の 1 箇所に閉じている
+(Kitesurf が SandboxOutbound に閉じ込めているのと同じ形)。
+
+| ページ | HTML | CSS | 画像 |
+| --- | --- | --- | --- |
+| `ja.wikipedia.org` | 140 KB | 3 枚 231 KB | 24 枚 452 KB |
+| `en.wikipedia.org` | 246 KB | 2 枚 210 KB | — |
+| `developer.mozilla.org` | 118 KB | 20 枚 55 KB | — |
+| `blog.cloudflare.com/kitesurf` | 569 KB | — | — |
 
 ## 動かす
 
 ```bash
 npm install
-npm run fonts     # Latin だけに絞った TTF を fonts/ に作る
+npm run fonts     # 文字を絞った TTF (Latin / 日本語) を fonts/ に作る
 npm run build     # Rust を wasm32 にビルドする
 npm run dev       # ローカルで起動
 ```
@@ -51,17 +69,26 @@ rustup target add wasm32-unknown-unknown
 
 作りながら踏んだところを `NOTES.md` に書いている。要点だけ:
 
-- **Stylo は wasm32-unknown-unknown に載る。** ただし `StyleThreading::Sequential` を指定する必要がある。既定の並列トラバースは rayon のスレッドプールを使うので、スレッドの無い wasm では動かない
+- **Stylo は wasm32-unknown-unknown に、何の対応もなしに載る。** 並列トラバースが rayon を要求するので無理だろうと踏んでいたが、blitz-dom の `StyleThreading` は既定が `Sequential` で、単一スレッド動作が想定済みの構成だった。CSS のパースとカスケードは OS に依存しない純粋な計算なので、載らない理由の方が無い
 - **フォントはシステムから取れない。** Workers にフォントが 1 つも無いので、TTF を自分で埋め込んで Parley に登録するしかない。woff2 は Brotli で圧縮されていて Workers 側でほどけないので、TrueType のまま置く
+- **フォントを足すだけでは文字は出ない。** fontique は wasm32 ではシステムフォントのバックエンドが空になる。Parley は「family に無い文字」を script 単位の fallback で探すので、そこが空だと**文字が幅 0 で消える。エラーは出ない**。13 個の generic family と 14 の script に、登録したフォントを手で結び付ける必要がある
+- **同じ family に別の文字集合を入れると、片方が黙って消える。** fontsource のサブセットは name テーブルの family 名が全部同じ (`Noto Sans JP Thin`) なので、Latin と日本語をそのまま渡すと 1 つの family に入る。fontique は weight で 1 face だけを選び、Parley はその face の cmap しか見ないので、weight 400 の face が 2 つあると片方の文字が出ない。`FontInfoOverride` でファイル内の名前を捨てて回避した
 - `eval` は使えない。ページの中の `<script>` を実行しようとすると、そこで詰まる。Kitesurf が Boa (Rust 製の JS エンジン) を Wasm で持ち込んでいるのは、この壁を越えるため
 
 ## できないこと
 
 スクリーンショットを撮るところまでを目標にしているので、実用のブラウザではない。
 
-- JavaScript を実行しない (`<script>` は無視する)
-- 画像や外部 CSS などのサブリソースを取りに行かない
-- Latin のみ。日本語を出すにはフォントを足す必要がある
+- **JavaScript を実行しない** (`<script>` は無視する)。Workers は `eval` を許さないので、
+  ここに手を出すと Kitesurf と同じように JS エンジンを Wasm で持ち込むことになる
+- **CSS の中から参照される画像を取れない。** `background-image: url(...)` は、
+  どのセレクタが適用されるかがカスケードとレイアウトの後にしか決まらないので、
+  HTML を走査する方式では拾えない。2 パス (1 回描いて足りない URL を集め、
+  取得して描き直す) が必要で、これは対応中
+- フォントに入れた文字しか出ない。いまは Latin と、ひらがな・カタカナ・
+  常用漢字あたり。他の言語を出すにはフォントを足す
+- `@font-face` の web font を取りに行かない
+- 動くもの (アニメーション、動画、WebGL) は扱わない
 
 ## ライセンス
 

@@ -19,20 +19,28 @@ Kitesurf が公開情報で挙げている構成を、そのまま Cloudflare Wo
 `eval` が禁じられているのは、Kitesurf が Boa を Wasm で持ち込んでいる理由そのもの。
 自分の Worker で同じエラーを踏んで、はじめて納得がいった。
 
-## Stylo は wasm32-unknown-unknown に載る
+## Stylo は wasm32-unknown-unknown に、何の対応もなしに載る
 
 一番の懸念だった。Servo のスタイルシステムは並列トラバースに rayon を使うので、
 スレッドの無い wasm では動かないと踏んでいた。
 
-実際には**そのままビルドできる**。必要だったのは 1 行だけ。
+**そのままビルドできる。設定も要らなかった。**
+
+最初は `StyleThreading::Sequential` を明示的に指定して「これが必要だった」と
+書いたが、blitz-dom のこの enum は `#[default]` が `Sequential` で、
+`DocumentConfig::default()` が最初からそうなっている。書いた 1 行は何もしていない。
 
 ```rust
-blitz_html::HtmlDocument::from_html(html, DocumentConfig {
-    // 既定は Parallel。rayon のスレッドプールを使うので wasm では動かない
-    style_threading: StyleThreading::Sequential,
-    ..Default::default()
-})
+pub enum StyleThreading {
+    Parallel,
+    #[default]
+    Sequential,   // これが既定
+}
 ```
+
+つまり Blitz の作者が単一スレッド動作を想定済みの構成にしている。
+CSS のパースとカスケードは OS に依存しない純粋な計算なので、載らない理由の方が無い。
+「無理そうなものが通った」という話ではなかった。
 
 `html5ever` / `blitz-dom` / `blitz-html` / `Stylo` / `Taffy` / `usvg` が
 同じターゲットで通る。`doc.resolve(0.0)` (スタイル解決 + レイアウト) まで含めて

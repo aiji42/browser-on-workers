@@ -38,7 +38,7 @@ export async function fetchHtml(url) {
 // クエリ文字列が壊れる。Wikipedia の /w/load.php?lang=en&amp;modules=... が
 // まさにこれで、戻さないと中身のほぼ無い CSS が返ってくる。
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0' };
-function decodeEntities(s) {
+export function decodeEntities(s) {
   return s.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (m, body) => {
     if (body[0] === '#') {
       const code = body[1] === 'x' || body[1] === 'X'

@@ -11,9 +11,11 @@
 
 import { encodePNG } from './png.js';
 import { demoHtml, cardHtml, jsDemoHtml, DEMO_SHOTS } from './demo.js';
-import { fetchHtml, fetchStylesheets, fetchImages, fetchResources } from './outbound.js';
+import { fetchHtml, fetchStylesheets, fetchImages, fetchResources, decodeEntities } from './outbound.js';
 import { injectPolyfill } from './polyfill.js';
 import { runInV8, probeWasmInV8, probeEvalContext, probeTopLevelAwait, probeExclusivity } from './v8page.js';
+import { probeGlobalInit, probeGlobalFetch } from './globalprobe.js';
+import { renderInV8 } from './pagescript.js';
 
 export { RateLimiter } from './ratelimit.js';
 
@@ -228,6 +230,110 @@ export default {
       // cpuTime は wrangler tail で見る。Date.now() は I/O の無い区間で進まないので、
       // ここの ms はほぼ 0 になる
       return Response.json({ engine: 'V8 (Worker)', n, x, ms: Date.now() - t });
+    }
+
+    // ページの JS を V8 で実行して描く経路。/shot と同じ引数を取る
+    if (url.pathname === '/v8shot') {
+      const target = url.searchParams.get('url');
+      const inlineHtml = url.searchParams.get('html');
+      if (!target && !inlineHtml) return new Response('url または html が必要です', { status: 400 });
+      const w = Math.min(2000, Math.max(64, Number(url.searchParams.get('w')) || DEFAULT_WIDTH));
+      const h = Math.min(4000, Math.max(64, Number(url.searchParams.get('h')) || DEFAULT_HEIGHT));
+      const limited = await overLimit(env, request, 'shot');
+      if (limited) return tooMany(limited);
+
+      const timing = {};
+      try {
+        let t = Date.now();
+        let html = inlineHtml ?? '';
+        let baseUrl = target ?? 'https://inline.invalid/';
+        if (target) {
+          const got = await fetchHtml(target);
+          html = got.html;
+          baseUrl = got.finalUrl;
+        }
+        timing.fetchMs = Date.now() - t;
+
+        // 資源は本体の Worker が取ってから渡す。PageScript には
+        // ネットワークを持たせない (Kitesurf が SandboxOutbound に閉じているのと同じ形)
+        t = Date.now();
+        const deny = (u) => u.startsWith(`${url.origin}/`);
+        const [sheets, imgs] = await Promise.all([
+          fetchStylesheets(html, baseUrl, deny),
+          fetchImages(html, baseUrl, deny),
+        ]);
+        // ページの外部スクリプトも先に取る
+        const scriptUrls = [...html.matchAll(/<script\b[^>]*\bsrc\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>/gi)]
+          .map((m) => m.slice(2).find(Boolean))
+          .map((u) => { try { return new URL(decodeEntities(u), baseUrl).href; } catch { return null; } })
+          .filter(Boolean);
+        const gotScripts = scriptUrls.length ? await fetchResources(scriptUrls, baseUrl, deny) : { got: [] };
+        timing.subresourceMs = Date.now() - t;
+        timing.css = sheets.sheets.length;
+        timing.img = imgs.images.length;
+        timing.scriptFiles = gotScripts.got.length;
+
+        const resources = [
+          ...sheets.sheets.map((s2) => ({ url: s2.url, bytes: s2.bytes })),
+          ...imgs.images.map((i2) => ({ url: i2.url, bytes: i2.bytes })),
+          ...gotScripts.got.map((r) => ({ url: r.url, bytes: r.bytes })),
+        ];
+
+        // フォントも I/O では渡せないのでバイト列にして持たせる
+        t = Date.now();
+        const fonts = [];
+        for (const [path, family] of FONTS) {
+          const fr = await env.ASSETS.fetch(new URL(path, request.url));
+          if (fr.ok) fonts.push({ family, bytes: new Uint8Array(await fr.arrayBuffer()) });
+        }
+        timing.fontMs = Date.now() - t;
+
+        t = Date.now();
+        const { rgba, report } = await renderInV8(env, request, {
+          html, baseUrl, width: w, height: h, resources, fonts,
+        });
+        timing.pageScriptMs = Date.now() - t;
+
+        t = Date.now();
+        const png = await encodePNG(rgba, w, h);
+        timing.encodeMs = Date.now() - t;
+
+        return new Response(png, {
+          headers: {
+            'content-type': 'image/png',
+            'cache-control': 'no-store',
+            'x-timing': JSON.stringify(timing),
+            'x-page-script': JSON.stringify(report),
+          },
+        });
+      } catch (e) {
+        return Response.json({ ok: false, error: describeError(e), timing }, { status: 500 });
+      }
+    }
+
+    // グローバルスコープで fetch できるか (できるなら 1 パスで描ける)
+    if (url.pathname === '/v8fetch') {
+      const limited = await overLimit(env, request, 'demo');
+      if (limited) return tooMany(limited);
+      try {
+        return Response.json({ ok: true, ...(await probeGlobalFetch(env, `gf:${Math.random()}`)) });
+      } catch (e) {
+        return Response.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });
+      }
+    }
+
+    // グローバルスコープで engine を立ち上げられるか。
+    // 通れば、ページのスクリプトも eval が使える場所で走らせられる
+    if (url.pathname === '/v8global') {
+      const limited = await overLimit(env, request, 'demo');
+      if (limited) return tooMany(limited);
+      const t = Date.now();
+      try {
+        const out = await probeGlobalInit(env, request, url.searchParams.get('id') ?? `gi:${Math.random()}`);
+        return Response.json({ ok: true, ms: Date.now() - t, ...out });
+      } catch (e) {
+        return Response.json({ ok: false, ms: Date.now() - t, error: String(e?.message ?? e) }, { status: 500 });
+      }
     }
 
     // 「eval が使える場所」と「I/O が使える場所」が排他かを確かめる

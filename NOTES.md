@@ -155,6 +155,50 @@ callError: "1 is not a function"              (Boa は not a callable function)
 おまけ: グローバルスコープの `Date.now()` は **0** を返す。起動時は時計が
 文字どおりゼロから始まる。
 
+### 選ばされる: eval か、解釈中の資源取得か
+
+`globalOutbound` を渡しても渡さなくても、**グローバルスコープでは fetch が
+「Disallowed operation」**。handler では通る。eval は逆。
+
+| | `eval` | `fetch` (await) | `setTimeout` |
+| --- | --- | --- | --- |
+| グローバルスコープ | **通る** | Disallowed | Disallowed |
+| handler の中 | `EvalError` | 通る | 通る |
+
+つまり **どちらかしか選べない。**
+
+- **解釈の途中で資源を取りに行く**なら handler で走らせるしかない。そこでは
+  eval が使えないので、JS エンジンを持ち込むことになる (Kitesurf の Boa)
+- **資源を先に全部取ってから渡す**ならグローバルスコープで完結できる。
+  eval が使えて V8 の速度が出る。代償は「解釈の前には何が必要か分からない」
+  ので描き直しが要ること (このリポジトリの多パス)
+
+Kitesurf は live なブラウザセッション (CDP、ナビゲーション、イベント) なので、
+スクリプトの実行はいずれ handler の中で起きる。だから Boa が要る、というのが
+**この排他から導ける説明** (推定。Cloudflare の実装は見ていない)。
+
+もう 1 つの説明も否定できない: **Kitesurf を作った時期には、動的 Worker でも
+eval が使えなかった**のかもしれない。発表は 2026-08-06。
+
+### 実測: 同じページを Boa と V8 で描く
+
+200,000 回のループを含むページ (400x160、外部資源なし)。
+
+| 経路 | cpuTime |
+| --- | --- |
+| Boa (本体の Worker の中) | 609 / 1023 ms (中央値 816) |
+| **V8 (動的 Worker、グローバルスコープ)** | **7 / 11 / 15 ms (中央値 11)** |
+
+**約 74 倍少ない。** ページ側から見た値も V8 だった。
+
+```json
+{"loop":599994,"hasStack":"string","callErr":"1 is not a function",
+ "evalOk":42,"globals":91}
+```
+
+`hasStack` が `string` (Boa は `undefined`)、`callErr` が V8 の文言、
+そして **`eval` が 42 を返している。**
+
 ### 15 MB の engine は動的 Worker に持ち込める
 
 `modules` に `{ wasm: ... }` で渡す。**コンパイル済みの `WebAssembly.Module` を

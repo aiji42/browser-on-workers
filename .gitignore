@@ -7,6 +7,8 @@ crate/target/
 !public/shots/*.png
 # 動的 Worker に渡すための engine 本体。pkg からのコピー (npm run build で作る)
 public/engine.wasm
+# 動的 Worker に渡すための glue。pkg からのコピー
+public/glue.js
 
 # 切り分けに使った第三者のページの HTML (952KB)。テストは無ければ skip する
 crate/fixtures/

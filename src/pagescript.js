@@ -28,6 +28,9 @@
 // すべてモジュールの評価中に済ませる。入力は I/O ではなくモジュールで渡す
 // (HTML は text モジュール、フォントと資源は data モジュール)。
 
+import DOM_SHIM from './pagescript/dom.shim.js';
+import { POLYFILL } from './polyfill.js';
+
 const COMPAT = '2026-09-01';
 
 /** ページの `<script>` を切り出す。外部スクリプトは資源の表から中身を引く */
@@ -112,7 +115,24 @@ globalThis.XMLHttpRequest = function () { throw new TypeError('XMLHttpRequest is
 
 // ページのスクリプトが投げた例外を集める
 globalThis.__pageErrors = [];
-globalThis.addEventListener = globalThis.addEventListener ?? (() => {});
+
+// window のイベント。1 枚の絵なので、load と DOMContentLoaded だけ後で流す
+globalThis.__windowListeners = new Map();
+globalThis.addEventListener = (type, fn) => {
+  if (typeof fn !== 'function') return;
+  const list = globalThis.__windowListeners.get(type) ?? [];
+  list.push(fn);
+  globalThis.__windowListeners.set(type, list);
+};
+globalThis.removeEventListener = () => {};
+globalThis.dispatchEvent = (ev) => {
+  for (const fn of globalThis.__windowListeners.get(ev && ev.type) ?? []) {
+    try { fn.call(globalThis, ev); } catch (e) { globalThis.__pageErrors.push(String(e && e.message)); }
+  }
+  return true;
+};
+globalThis.window = globalThis;
+globalThis.self = globalThis;
 `;
 
 /**
@@ -143,53 +163,119 @@ export async function renderInV8(env, request, page) {
     'glue.js': await assetText(env, request, '/glue.js'),
     'engine.wasm': { wasm: (await import('../crate/pkg/kitesurf_clone_bg.wasm')).default },
     'shim.js': SHIM,
+    'webapi.js': `${POLYFILL}\n`,
+    'dom.js': DOM_SHIM,
     'page.html': { text: stripped },
   };
   fonts.forEach((f, i) => { modules[`font${i}.ttf`] = { data: f.bytes.buffer ?? f.bytes }; });
   resources.forEach((r, i) => { modules[`res${i}.bin`] = { data: r.bytes.buffer ?? r.bytes }; });
-  scripts.forEach((s, i) => { modules[`page${i}.js`] = s.code; });
 
-  // entry。静的 import の順に評価されるので、shim -> 準備 -> ページ -> 仕上げ の順に並べる
-  const imports = [
-    // dom_* はまだ engine 側に無い。繋がったら差し替える
-    "import initWasm, { add_font, add_resource, clear_resources, render_png_rgba_no_js } from './glue.js';",
-    "import wasm from './engine.wasm';",
-    "import html from './page.html';",
-    "import './shim.js';",
-    ...fonts.map((_, i) => `import font${i} from './font${i}.ttf';`),
-    ...resources.map((_, i) => `import res${i} from './res${i}.bin';`),
-  ].join('\n');
+  // ページのスクリプトは **モジュールにしない**。
+  //
+  // ブラウザの classic script はグローバルスコープで走るので、`var x` や
+  // `function f()` が window に乗り、あとのスクリプトから見える。モジュールに
+  // すると各自が別スコープになって、これが壊れる。
+  //
+  // グローバルスコープでは `eval` が使えるので、**間接 eval で走らせれば
+  // 本物と同じスコープになる。** 文字列は JSON で安全に運ぶ
+  modules['sources.js'] = `export default ${JSON.stringify(scripts.map((s2) => s2.code))};`;
 
-  const setup = `
-await initWasm(wasm);
-${fonts.map((f, i) => `add_font(new Uint8Array(font${i}), ${JSON.stringify(f.family)});`).join('\n')}
-clear_resources();
-${resources.map((r, i) => `add_resource(${JSON.stringify(r.url)}, new Uint8Array(res${i}));`).join('\n')}
-const __report = { engine: 'V8', scripts: ${scripts.length}, errors: [], timers: null };
-// eval が使えることをその場で確かめて記録する
-try { __report.evalWorks = eval('1+1') === 2; } catch (e) { __report.evalWorks = e.name; }
-`;
+  // 静的 import は「取り込む側の本体」より先に評価される。
+  // だから setup を別のモジュールに置いて、いちばん先に import する。
+  // 順番は setup -> ページのスクリプト -> finish になる
+  const glueImports = "import * as glue from './glue.js';";
+  const fontImports = fonts.map((_, i) => `import font${i} from './font${i}.ttf';`).join('\n');
+  const resImports = resources.map((_, i) => `import res${i} from './res${i}.bin';`).join('\n');
 
-  // ページのスクリプトは 1 本ずつ import する。1 本が投げても次を止めない、
-  // ということは静的 import ではできないので、失敗しても壊れないよう
-  // それぞれのモジュールの中で包む
-  const pageImports = scripts.map((_, i) => `import './page${i}.js';`).join('\n');
+  modules['setup.js'] = `
+${glueImports}
+import wasm from './engine.wasm';
+import html from './page.html';
+import SOURCES from './sources.js';
+import './shim.js';
+import './webapi.js';
+import './dom.js';
+${fontImports}
+${resImports}
 
-  const finish = `
-__report.timers = globalThis.__drainTimers(${timerLimit});
-__report.errors = globalThis.__pageErrors.slice(0, 8);
-// 切り分け用。ページが globalThis.__result に置いた値を持ち帰る
-if (globalThis.__result !== undefined) {
-  try { __report.pageResult = JSON.parse(JSON.stringify(globalThis.__result)); } catch (e) { /* 持ち帰れないものは捨てる */ }
+// ここはモジュールの評価中。I/O とタイマーは使えないが、
+// instantiate と eval は使える
+await glue.default(wasm);
+
+${fonts.map((f, i) => `glue.add_font(new Uint8Array(font${i}), ${JSON.stringify(f.family)});`).join('\n')}
+glue.clear_resources();
+${resources.map((r, i) => `glue.add_resource(${JSON.stringify(r.url)}, new Uint8Array(res${i}));`).join('\n')}
+
+const report = { engine: 'V8', scripts: ${scripts.length}, errors: [], timers: null, dom: null };
+try { report.evalWorks = eval('1+1') === 2; } catch (e) { report.evalWorks = e.name; }
+
+// DOM を開いて JS の顔を付ける。dom_* が無い engine ではここで落ちるので、
+// 落ちても描けるように記録だけして進む
+let docHandle = 0;
+try {
+  docHandle = glue.dom_open(html, ${JSON.stringify(baseUrl)}, ${width}, ${height});
+  if (!docHandle) throw new Error('dom_open が 0 を返した');
+  globalThis.installDom(glue, docHandle);
+  report.dom = 'ok';
+} catch (e) {
+  report.dom = String(e && e.message).slice(0, 160);
 }
-const __rgba = render_png_rgba_no_js(html, ${JSON.stringify(baseUrl)}, ${width}, ${height});
+
+export const engine = { glue, html, docHandle, report,
+  baseUrl: ${JSON.stringify(baseUrl)}, width: ${width}, height: ${height} };
+
+// ページのスクリプトを文書順に走らせる。
+// 間接 eval なのでグローバルスコープで評価され、var と function が window に乗る。
+// 1 本が投げても次を止めない (ブラウザと同じ)
+report.ran = 0;
+for (const src of SOURCES) {
+  try {
+    (0, eval)(src);
+    report.ran++;
+  } catch (e) {
+    report.errors.push(String((e && e.name) + ': ' + (e && e.message)).slice(0, 200));
+  }
+}
 `;
 
-  const entry = `${imports}\n${setup}\n${pageImports}\n${finish}
+  modules['finish.js'] = `
+// setup.js を import することで「setup が終わってから」を保証する。
+// 静的 import を 2 本並べただけでは、setup 側の top-level await が
+// 終わる前に finish が評価されてしまう
+import { engine as E } from './setup.js';
+
+// DOMContentLoaded と load を流す
+if (E.report.dom === 'ok') {
+  try { globalThis.__domReady(); } catch (e) { E.report.errors.push(String(e && e.message)); }
+}
+
+// 積んだタイマーを流す
+E.report.timers = globalThis.__drainTimers(${timerLimit});
+E.report.errors.push(...globalThis.__pageErrors.slice(0, 8));
+if (globalThis.__result !== undefined) {
+  try { E.report.pageResult = JSON.parse(JSON.stringify(globalThis.__result)); } catch (e) { /* 持ち帰れないものは捨てる */ }
+}
+
+// 描く。DOM が繋がっていれば JS の変更が入った DOM を描き、
+// 繋がっていなければ HTML から描き直す (JS の効果は入らない)
+let rgba;
+if (E.report.dom === 'ok') {
+  E.glue.dom_settle(E.docHandle);
+  rgba = E.glue.dom_paint(E.docHandle);
+  E.glue.dom_close(E.docHandle);
+} else {
+  rgba = E.glue.render_png_rgba_no_js(E.html, E.baseUrl, E.width, E.height);
+}
+export const result = { rgba, report: E.report };
+`;
+
+  const entry = `
+import { result } from './finish.js';
+
 export default {
   async fetch(request) {
-    if (new URL(request.url).pathname === '/report') return Response.json(__report);
-    return new Response(__rgba, { headers: { 'content-type': 'application/octet-stream' } });
+    if (new URL(request.url).pathname === '/report') return Response.json(result.report);
+    return new Response(result.rgba, { headers: { 'content-type': 'application/octet-stream' } });
   },
 };
 `;

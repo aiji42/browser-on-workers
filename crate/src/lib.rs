@@ -26,6 +26,11 @@ use net::TableNetProvider;
 /// ページの `<script>` を Boa で実行する。入口は `set_js_enabled` / `last_js_errors`
 pub mod script;
 
+/// 描画を段に割り (`dom_open` / `dom_settle` / `dom_paint` / `dom_close`)、
+/// その間に DOM を読み書きする口を出す。JS を V8 (Dynamic Worker) 側で走らせて、
+/// DOM だけこちらに置くための入口
+pub mod dom;
+
 /// テストが読むフォントの場所。`scripts/build-fonts.mjs` の出力先は
 /// `public/fonts/` (Worker が Static Assets として配る場所) だが、
 /// 以前は `fonts/` だったので、両方を見る

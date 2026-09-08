@@ -8,7 +8,9 @@
   "routes": [{ "pattern": "not-kitesurf.aiji42.dev", "custom_domain": true }],
   // Rust 側の Wasm はバンドルに同梱する
   "rules": [
-    { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": false }
+    { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": false },
+    // 動的 Worker に文字列として渡すコード。Text で読むと中身が string で入る
+    { "type": "Text", "globs": ["**/*.shim.js"] }
   ],
   // フォントは Static Assets に置いて、実行時に binding から読む。
   // Kitesurf も PageRenderer が Static Assets からフォントを取っている。

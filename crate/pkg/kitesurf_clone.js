@@ -78,6 +78,872 @@ export function clear_resources() {
 }
 
 /**
+ * `parent.appendChild(child)`。
+ *
+ * 先に今の親から外す。「同じ親の末尾へ動かす」も正しく動くようになる
+ * @param {number} doc
+ * @param {number} parent
+ * @param {number} child
+ */
+export function dom_append_child(doc, parent, child) {
+    wasm.dom_append_child(doc, parent, child);
+}
+
+/**
+ * 付いている属性の名前を並び順で返す
+ * @param {number} doc
+ * @param {number} node
+ * @returns {string[]}
+ */
+export function dom_attribute_names(doc, node) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.dom_attribute_names(retptr, doc, node);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayJsValueFromWasm0(r0, r1);
+        wasm.__wbindgen_export4(r0, r1 * 4, 4);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * `document.body`
+ * @param {number} doc
+ * @returns {number}
+ */
+export function dom_body(doc) {
+    const ret = wasm.dom_body(doc);
+    return ret >>> 0;
+}
+
+/**
+ * `element.getBoundingClientRect()` を `[x, y, width, height]` で返す。
+ *
+ * 読む前に `resolve` を回す。JS が DOM をいじった直後に `dom_settle` を
+ * 呼ばずにこれを読んでも、古い数が返らないようにする
+ * @param {number} doc
+ * @param {number} node
+ * @returns {Float64Array}
+ */
+export function dom_bounding_rect(doc, node) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.dom_bounding_rect(retptr, doc, node);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayF64FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 8, 8);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * `node.childNodes` (テキストとコメントも入る)
+ * @param {number} doc
+ * @param {number} node
+ * @returns {Uint32Array}
+ */
+export function dom_child_nodes(doc, node) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.dom_child_nodes(retptr, doc, node);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayU32FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 4, 4);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * `element.children` (要素だけ)
+ * @param {number} doc
+ * @param {number} node
+ * @returns {Uint32Array}
+ */
+export function dom_children(doc, node) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.dom_children(retptr, doc, node);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayU32FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 4, 4);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * `element.clientHeight`
+ * @param {number} doc
+ * @param {number} node
+ * @returns {number}
+ */
+export function dom_client_height(doc, node) {
+    const ret = wasm.dom_client_height(doc, node);
+    return ret;
+}
+
+/**
+ * `element.clientWidth`
+ * @param {number} doc
+ * @param {number} node
+ * @returns {number}
+ */
+export function dom_client_width(doc, node) {
+    const ret = wasm.dom_client_width(doc, node);
+    return ret;
+}
+
+/**
+ * document を捨てる。handle はもう使えない (使っても panic はしない)
+ * @param {number} doc
+ */
+export function dom_close(doc) {
+    wasm.dom_close(doc);
+}
+
+/**
+ * `element.closest`
+ * @param {number} doc
+ * @param {number} node
+ * @param {string} sel
+ * @returns {number}
+ */
+export function dom_closest(doc, node, sel) {
+    const ptr0 = passStringToWasm0(sel, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.dom_closest(doc, node, ptr0, len0);
+    return ret >>> 0;
+}
+
+/**
+ * `getComputedStyle(node).getPropertyValue(property)`。
+ *
+ * レイアウトに依る値 (`width` など) は使用値になるので、読む前に `resolve` を回す
+ * @param {number} doc
+ * @param {number} node
+ * @param {string} property
+ * @returns {string}
+ */
+export function dom_computed_style(doc, node, property) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(property, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.dom_computed_style(retptr, doc, node, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred2_0 = r0;
+        deferred2_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * `document.createComment`
+ * @param {number} doc
+ * @param {string} text
+ * @returns {number}
+ */
+export function dom_create_comment(doc, text) {
+    const ptr0 = passStringToWasm0(text, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.dom_create_comment(doc, ptr0, len0);
+    return ret >>> 0;
+}
+
+/**
+ * `document.createElement`。作った要素はまだ木に付いていない
+ * @param {number} doc
+ * @param {string} tag
+ * @returns {number}
+ */
+export function dom_create_element(doc, tag) {
+    const ptr0 = passStringToWasm0(tag, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.dom_create_element(doc, ptr0, len0);
+    return ret >>> 0;
+}
+
+/**
+ * `document.createTextNode`
+ * @param {number} doc
+ * @param {string} text
+ * @returns {number}
+ */
+export function dom_create_text_node(doc, text) {
+    const ptr0 = passStringToWasm0(text, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.dom_create_text_node(doc, ptr0, len0);
+    return ret >>> 0;
+}
+
+/**
+ * `document.documentElement` (`<html>`)
+ * @param {number} doc
+ * @returns {number}
+ */
+export function dom_document_element(doc) {
+    const ret = wasm.dom_document_element(doc);
+    return ret >>> 0;
+}
+
+/**
+ * `node.firstChild`
+ * @param {number} doc
+ * @param {number} node
+ * @returns {number}
+ */
+export function dom_first_child(doc, node) {
+    const ret = wasm.dom_first_child(doc, node);
+    return ret >>> 0;
+}
+
+/**
+ * `element.getAttribute`。無ければ `undefined`
+ * @param {number} doc
+ * @param {number} node
+ * @param {string} name
+ * @returns {string | undefined}
+ */
+export function dom_get_attribute(doc, node, name) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.dom_get_attribute(retptr, doc, node, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        let v2;
+        if (r0 !== 0) {
+            v2 = getStringFromWasm0(r0, r1);
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        }
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * `document.getElementById`
+ * @param {number} doc
+ * @param {string} id
+ * @returns {number}
+ */
+export function dom_get_element_by_id(doc, id) {
+    const ptr0 = passStringToWasm0(id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.dom_get_element_by_id(doc, ptr0, len0);
+    return ret >>> 0;
+}
+
+/**
+ * `element.hasAttribute`
+ * @param {number} doc
+ * @param {number} node
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function dom_has_attribute(doc, node, name) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.dom_has_attribute(doc, node, ptr0, len0);
+    return ret !== 0;
+}
+
+/**
+ * `document.head`
+ * @param {number} doc
+ * @returns {number}
+ */
+export function dom_head(doc) {
+    const ret = wasm.dom_head(doc);
+    return ret >>> 0;
+}
+
+/**
+ * `element.innerHTML` (子の outerHTML を並べたもの)
+ * @param {number} doc
+ * @param {number} node
+ * @returns {string}
+ */
+export function dom_inner_html(doc, node) {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.dom_inner_html(retptr, doc, node);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred1_0 = r0;
+        deferred1_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * `parent.insertBefore(child, ref_node)`。`ref_node` が 0 なら末尾に足す
+ * @param {number} doc
+ * @param {number} parent
+ * @param {number} child
+ * @param {number} ref_node
+ */
+export function dom_insert_before(doc, parent, child, ref_node) {
+    wasm.dom_insert_before(doc, parent, child, ref_node);
+}
+
+/**
+ * `node.lastChild`
+ * @param {number} doc
+ * @param {number} node
+ * @returns {number}
+ */
+export function dom_last_child(doc, node) {
+    const ret = wasm.dom_last_child(doc, node);
+    return ret >>> 0;
+}
+
+/**
+ * `element.matches`
+ * @param {number} doc
+ * @param {number} node
+ * @param {string} sel
+ * @returns {boolean}
+ */
+export function dom_matches(doc, node, sel) {
+    const ptr0 = passStringToWasm0(sel, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.dom_matches(doc, node, ptr0, len0);
+    return ret !== 0;
+}
+
+/**
+ * `node.nextSibling`
+ * @param {number} doc
+ * @param {number} node
+ * @returns {number}
+ */
+export function dom_next_sibling(doc, node) {
+    const ret = wasm.dom_next_sibling(doc, node);
+    return ret >>> 0;
+}
+
+/**
+ * `node.nodeType`。DOM の番号 (1 要素 / 3 テキスト / 8 コメント / 9 document /
+ * 11 fragment)。ノードが無ければ 0。
+ *
+ * blitz-dom は fragment を「`#document-fragment` という名前の、親のいない要素」で
+ * 表す。匿名ブロック (`AnonymousBlock`) はレイアウトのために blitz-dom が挟む
+ * 箱で、DOM としては要素と同じに見せる
+ * @param {number} doc
+ * @param {number} node
+ * @returns {number}
+ */
+export function dom_node_type(doc, node) {
+    const ret = wasm.dom_node_type(doc, node);
+    return ret >>> 0;
+}
+
+/**
+ * `element.offsetHeight`
+ * @param {number} doc
+ * @param {number} node
+ * @returns {number}
+ */
+export function dom_offset_height(doc, node) {
+    const ret = wasm.dom_offset_height(doc, node);
+    return ret;
+}
+
+/**
+ * `element.offsetLeft` (offsetParent の padding 辺からの位置)
+ * @param {number} doc
+ * @param {number} node
+ * @returns {number}
+ */
+export function dom_offset_left(doc, node) {
+    const ret = wasm.dom_offset_left(doc, node);
+    return ret;
+}
+
+/**
+ * `element.offsetTop`
+ * @param {number} doc
+ * @param {number} node
+ * @returns {number}
+ */
+export function dom_offset_top(doc, node) {
+    const ret = wasm.dom_offset_top(doc, node);
+    return ret;
+}
+
+/**
+ * `element.offsetWidth`
+ * @param {number} doc
+ * @param {number} node
+ * @returns {number}
+ */
+export function dom_offset_width(doc, node) {
+    const ret = wasm.dom_offset_width(doc, node);
+    return ret;
+}
+
+/**
+ * HTML をパースして document を開く。**`<script>` は実行しない**。
+ *
+ * 開いた時点で 1 度 `settle` (スタイル + レイアウト) を回すので、`dom_offset_width`
+ * のようなレイアウトの読み出しがすぐ使える。返り値は 0 でない document handle。
+ * 失敗したら 0 で、理由は `last_panic()` から取れる。
+ *
+ * フォントは `add_font`、サブリソースは `add_resource` で**先に**渡しておく
+ * (`render_png_rgba` と同じ)。取りこぼした URL は `missed_resources()` に出る
+ * @param {string} html
+ * @param {string} base_url
+ * @param {number} width
+ * @param {number} height
+ * @returns {number}
+ */
+export function dom_open(html, base_url, width, height) {
+    const ptr0 = passStringToWasm0(html, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(base_url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.dom_open(ptr0, len0, ptr1, len1, width, height);
+    return ret >>> 0;
+}
+
+/**
+ * 開いている document の数 (取りこぼしの確認用)
+ * @returns {number}
+ */
+export function dom_open_count() {
+    const ret = wasm.dom_open_count();
+    return ret >>> 0;
+}
+
+/**
+ * `element.outerHTML`
+ * @param {number} doc
+ * @param {number} node
+ * @returns {string}
+ */
+export function dom_outer_html(doc, node) {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.dom_outer_html(retptr, doc, node);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred1_0 = r0;
+        deferred1_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * いまの DOM を RGBA8 に描く。返り値は `width * height * 4` バイト。
+ *
+ * 中身は `render_png_rgba` の末尾と同じ (先に白で敷いてから `paint_scene`)。
+ * handle が無ければ空の `Vec`
+ * @param {number} doc
+ * @returns {Uint8Array}
+ */
+export function dom_paint(doc) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.dom_paint(retptr, doc);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v1 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 1, 1);
+        return v1;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * `node.parentNode`
+ * @param {number} doc
+ * @param {number} node
+ * @returns {number}
+ */
+export function dom_parent(doc, node) {
+    const ret = wasm.dom_parent(doc, node);
+    return ret >>> 0;
+}
+
+/**
+ * `node.previousSibling`
+ * @param {number} doc
+ * @param {number} node
+ * @returns {number}
+ */
+export function dom_previous_sibling(doc, node) {
+    const ret = wasm.dom_previous_sibling(doc, node);
+    return ret >>> 0;
+}
+
+/**
+ * `document.querySelector`。セレクタが壊れていたら 0
+ * @param {number} doc
+ * @param {string} sel
+ * @returns {number}
+ */
+export function dom_query_selector(doc, sel) {
+    const ptr0 = passStringToWasm0(sel, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.dom_query_selector(doc, ptr0, len0);
+    return ret >>> 0;
+}
+
+/**
+ * `document.querySelectorAll`。セレクタが壊れていたら空
+ * @param {number} doc
+ * @param {string} sel
+ * @returns {Uint32Array}
+ */
+export function dom_query_selector_all(doc, sel) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(sel, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.dom_query_selector_all(retptr, doc, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v2 = getArrayU32FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 4, 4);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * `element.querySelectorAll`
+ * @param {number} doc
+ * @param {number} node
+ * @param {string} sel
+ * @returns {Uint32Array}
+ */
+export function dom_query_selector_all_within(doc, node, sel) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(sel, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.dom_query_selector_all_within(retptr, doc, node, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v2 = getArrayU32FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export4(r0, r1 * 4, 4);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * `element.querySelector` (node の子孫の中から探す)
+ * @param {number} doc
+ * @param {number} node
+ * @param {string} sel
+ * @returns {number}
+ */
+export function dom_query_selector_within(doc, node, sel) {
+    const ptr0 = passStringToWasm0(sel, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.dom_query_selector_within(doc, node, ptr0, len0);
+    return ret >>> 0;
+}
+
+/**
+ * `node.remove()`
+ * @param {number} doc
+ * @param {number} node
+ */
+export function dom_remove(doc, node) {
+    wasm.dom_remove(doc, node);
+}
+
+/**
+ * `element.removeAttribute`
+ * @param {number} doc
+ * @param {number} node
+ * @param {string} name
+ */
+export function dom_remove_attribute(doc, node, name) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    wasm.dom_remove_attribute(doc, node, ptr0, len0);
+}
+
+/**
+ * `parent.removeChild(child)`。捨てずに外すだけ
+ * @param {number} doc
+ * @param {number} parent
+ * @param {number} child
+ */
+export function dom_remove_child(doc, parent, child) {
+    wasm.dom_remove_child(doc, parent, child);
+}
+
+/**
+ * `node.style.removeProperty(property)`
+ * @param {number} doc
+ * @param {number} node
+ * @param {string} property
+ */
+export function dom_remove_style_property(doc, node, property) {
+    const ptr0 = passStringToWasm0(property, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    wasm.dom_remove_style_property(doc, node, ptr0, len0);
+}
+
+/**
+ * `parent.replaceChild(new_child, old_child)`
+ * @param {number} doc
+ * @param {number} parent
+ * @param {number} new_child
+ * @param {number} old_child
+ */
+export function dom_replace_child(doc, parent, new_child, old_child) {
+    wasm.dom_replace_child(doc, parent, new_child, old_child);
+}
+
+/**
+ * `document` そのもの (nodeType 9 のノード)
+ * @param {number} doc
+ * @returns {number}
+ */
+export function dom_root_node(doc) {
+    const ret = wasm.dom_root_node(doc);
+    return ret >>> 0;
+}
+
+/**
+ * `element.scrollHeight`
+ * @param {number} doc
+ * @param {number} node
+ * @returns {number}
+ */
+export function dom_scroll_height(doc, node) {
+    const ret = wasm.dom_scroll_height(doc, node);
+    return ret;
+}
+
+/**
+ * `element.scrollWidth`
+ * @param {number} doc
+ * @param {number} node
+ * @returns {number}
+ */
+export function dom_scroll_width(doc, node) {
+    const ret = wasm.dom_scroll_width(doc, node);
+    return ret;
+}
+
+/**
+ * `element.setAttribute`。
+ *
+ * 書き換えは `doc.mutate()` を通す。返ってくる `DocumentMutator` は
+ * **drop のときに `flush` する** ので、`<style>` の取り込みや再描画の要求は
+ * この関数を抜けるところで済んでいる。呼び出し側で無効化を足す必要は無い
+ * @param {number} doc
+ * @param {number} node
+ * @param {string} name
+ * @param {string} value
+ */
+export function dom_set_attribute(doc, node, name, value) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(value, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len1 = WASM_VECTOR_LEN;
+    wasm.dom_set_attribute(doc, node, ptr0, len0, ptr1, len1);
+}
+
+/**
+ * `element.innerHTML = html`。
+ *
+ * 断片は blitz-html (html5ever) が組む。`dom_open` で
+ * `html_parser_provider` を渡してあるので、ここで本物の要素になる。
+ *
+ * 元の子は先に detach する。`set_inner_html` は残っている子を
+ * **捨てる** (`remove_and_drop_all_children`) ので、外しておかないと
+ * JS が持っている handle が死ぬ
+ * @param {number} doc
+ * @param {number} node
+ * @param {string} html
+ */
+export function dom_set_inner_html(doc, node, html) {
+    const ptr0 = passStringToWasm0(html, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    wasm.dom_set_inner_html(doc, node, ptr0, len0);
+}
+
+/**
+ * `node.style.setProperty(property, value)`。
+ *
+ * blitz-dom は inline style を `style` 属性の文字列としてしか持たないので、
+ * 読んで書き換えて書き戻す (vendor の `blitz-vibey-script` と同じやり方)。
+ * 宣言として不正なら何もしない (CSSOM の決まり)
+ * @param {number} doc
+ * @param {number} node
+ * @param {string} property
+ * @param {string} value
+ */
+export function dom_set_style_property(doc, node, property, value) {
+    const ptr0 = passStringToWasm0(property, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(value, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len1 = WASM_VECTOR_LEN;
+    wasm.dom_set_style_property(doc, node, ptr0, len0, ptr1, len1);
+}
+
+/**
+ * `node.textContent = text`。
+ *
+ * テキストノードとコメントは中身を差し替え、要素は子を捨ててテキスト 1 つにする。
+ * 子は **detach で外すだけで捨てない** (JS 側がまだ handle を持っているかもしれない
+ * ので、id が死なないほうがよい)
+ * @param {number} doc
+ * @param {number} node
+ * @param {string} text
+ */
+export function dom_set_text_content(doc, node, text) {
+    const ptr0 = passStringToWasm0(text, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    wasm.dom_set_text_content(doc, node, ptr0, len0);
+}
+
+/**
+ * スタイルとレイアウトを取り直す。JS が DOM をいじったあとに呼ぶ。
+ *
+ * 中身は `render_png_rgba` が使っているのと同じ待ち方 (取得が増えなくなるまで
+ * `resolve` を回す)。取りこぼした URL は `missed_resources()` に置き直す
+ * @param {number} doc
+ */
+export function dom_settle(doc) {
+    wasm.dom_settle(doc);
+}
+
+/**
+ * `node.style.getPropertyValue(property)` (inline style だけを見る)
+ * @param {number} doc
+ * @param {number} node
+ * @param {string} property
+ * @returns {string}
+ */
+export function dom_style_property(doc, node, property) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(property, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.dom_style_property(retptr, doc, node, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred2_0 = r0;
+        deferred2_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * `element.tagName` (大文字)。要素でなければ空文字
+ * @param {number} doc
+ * @param {number} node
+ * @returns {string}
+ */
+export function dom_tag_name(doc, node) {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.dom_tag_name(retptr, doc, node);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred1_0 = r0;
+        deferred1_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * `node.textContent`
+ * @param {number} doc
+ * @param {number} node
+ * @returns {string}
+ */
+export function dom_text_content(doc, node) {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.dom_text_content(retptr, doc, node);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred1_0 = r0;
+        deferred1_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * `<title>` の文字列
+ * @param {number} doc
+ * @returns {string}
+ */
+export function dom_title(doc) {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        wasm.dom_title(retptr, doc);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred1_0 = r0;
+        deferred1_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * 登録済みの family 名を登録順に返す (確認用)
  * @returns {string[]}
  */
@@ -434,6 +1300,11 @@ function dropObject(idx) {
     heap_next = idx;
 }
 
+function getArrayF64FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
+}
+
 function getArrayJsValueFromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     const mem = getDataViewMemory0();
@@ -442,6 +1313,11 @@ function getArrayJsValueFromWasm0(ptr, len) {
         result.push(takeObject(mem.getUint32(i, true)));
     }
     return result;
+}
+
+function getArrayU32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
 
 function getArrayU8FromWasm0(ptr, len) {
@@ -457,8 +1333,24 @@ function getDataViewMemory0() {
     return cachedDataViewMemory0;
 }
 
+let cachedFloat64ArrayMemory0 = null;
+function getFloat64ArrayMemory0() {
+    if (cachedFloat64ArrayMemory0 === null || cachedFloat64ArrayMemory0.byteLength === 0) {
+        cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
+    }
+    return cachedFloat64ArrayMemory0;
+}
+
 function getStringFromWasm0(ptr, len) {
     return decodeText(ptr >>> 0, len);
+}
+
+let cachedUint32ArrayMemory0 = null;
+function getUint32ArrayMemory0() {
+    if (cachedUint32ArrayMemory0 === null || cachedUint32ArrayMemory0.byteLength === 0) {
+        cachedUint32ArrayMemory0 = new Uint32Array(wasm.memory.buffer);
+    }
+    return cachedUint32ArrayMemory0;
 }
 
 let cachedUint8ArrayMemory0 = null;
@@ -583,6 +1475,8 @@ function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
     cachedDataViewMemory0 = null;
+    cachedFloat64ArrayMemory0 = null;
+    cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
     return wasm;

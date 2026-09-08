@@ -16,10 +16,10 @@ body{
   color:var(--ink); line-height:1.75; background:#fff;
 }
 .wrap{max-width:940px; margin:0 auto}
-header{padding:56px 0 26px}
+header{padding:56px 0 0}
 h1{margin:0 0 12px; font-size:32px; line-height:1.28; letter-spacing:-.015em}
 h1 span{color:var(--accent)}
-.lede{margin:0; font-size:16px; color:#444; max-width:64ch}
+.lede{margin:0 0 6px; font-size:16px; color:#444}
 .tag{
   display:inline-block; margin-bottom:20px; padding:4px 10px;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px;
@@ -258,7 +258,7 @@ export function demoHtml(origin) {
 
 <header>
   <span class="tag">CLOUDFLARE WORKERS</span>
-  <h1>Cloudflare の <span>Kitesurf</span> を、<br>公開情報だけで作ってみた</h1>
+  <h1>Cloudflare の <span>Kitesurf</span> を、公開情報だけで作ってみた</h1>
   <p class="lede">Chromium を使わず、Rust で書いたブラウザエンジンを Wasm にして Workers の isolate で動かす。Cloudflare が 2026 年 8 月に発表した <a href="https://blog.cloudflare.com/kitesurf/">Kitesurf</a> と同じ構成を、発表記事に名前が挙がっている部品だけで組んだものです。ソースコードは非公開なので、中身は見ていません。</p>
   <p class="lede">以下の画像は全部、この Worker が Wasm の中で描きました。</p>
 </header>

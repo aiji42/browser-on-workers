@@ -206,6 +206,21 @@ fontique は family の中から weight で 1 face を選び、Parley はその 
 family を作るようにした。だから `add_font` は family 名を取る。**別の文字集合のフォントは
 必ず別の family 名にする** (同じ名前にしていいのは regular と bold のような weight 違いだけ)。
 
+### サブセットに入っていない文字がある
+
+`Rust → wasm32` の矢印が消えた。`→` (U+2192) は **latin にも japanese にも入っていない**。
+fontsource のサブセットは 1 文字ずつ 120 個ほどのファイルに散らばっていて、
+`→` は `noto-sans-jp-89-400-normal.woff2` のような番号付きのファイルの中にいる。
+
+```
+$ node -e '... cmap を読む ...'
+sans-regular   →× ←× ✓× ※× あ× 日× A○
+jp-regular     →× ←× ✓× ※× あ○ 日○ A○
+```
+
+`subset-font` は 1 つのファイルからしか作れないので、拾うにはフォントの結合が要る。
+**無い文字は 0 幅で黙って消える**ので、HTML 側でこれらを使わないことにした。
+
 ### fallback の順序
 
 generic family (`sans-serif` など) は登録順。Parley は先頭の family から順に cmap を見て、

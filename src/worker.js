@@ -10,7 +10,7 @@
 // Chromium は使わない。ブラウザの処理は全部この isolate の中で終わる。
 
 import { encodePNG } from './png.js';
-import { demoHtml, cardHtml } from './demo.js';
+import { demoHtml, cardHtml, jsDemoHtml } from './demo.js';
 import { fetchHtml, fetchStylesheets, fetchImages, fetchResources } from './outbound.js';
 
 // Rust 側。wasm-bindgen の glue と、その中身の Wasm。
@@ -108,17 +108,33 @@ export default {
     if (url.pathname === '/') return html5(demoHtml(url.origin));
     // X などに貼る見せ札。外部資源を持たないので単体で描ける
     if (url.pathname === '/card') return html5(cardHtml());
+    // JavaScript が動いていることを見せるページ。Chrome で開いた絵と /js.png が一致する
+    if (url.pathname === '/js') return html5(jsDemoHtml());
 
     // 自分の HTML を、fetch を挟まずにそのまま描く。
     // Worker は自分自身の workers.dev の URL を fetch できない (404 になる) ので、
     // 自己紹介の絵を出すにはこの経路が必要
-    if (url.pathname === '/card.png' || url.pathname === '/self.png') {
-      const body = url.pathname === '/card.png' ? cardHtml() : demoHtml(url.origin);
-      const w = url.pathname === '/card.png' ? 1200 : 1000;
-      const h = url.pathname === '/card.png' ? 630 : 900;
+    // 自分の HTML を描く経路。毎リクエストで HTML を組まないよう、関数のまま持つ
+    const SELF = {
+      '/card.png': [cardHtml, 1200, 630],
+      '/js.png': [jsDemoHtml, 760, 560],
+      '/self.png': [() => demoHtml(url.origin), 1000, 900],
+    };
+    if (SELF[url.pathname]) {
+      const [make, w, h] = SELF[url.pathname];
+      const body = make();
       try {
         await ensureWasm(env, request);
         clear_resources();
+        // 自画像の中に自分で描いた絵が入っている。Worker は自分の URL を fetch できないので、
+        // 先にその 2 枚を描いて資源の表に入れてから、外側を描く
+        if (url.pathname === '/self.png') {
+          for (const inner of ['/card.png', '/js.png']) {
+            const [innerMake, iw, ih] = SELF[inner];
+            const png = await encodePNG(render_png_rgba(innerMake(), `${url.origin}/`, iw, ih), iw, ih);
+            add_resource(`${url.origin}${inner}`, new Uint8Array(png));
+          }
+        }
         const rgba = render_png_rgba(body, `${url.origin}/`, w, h);
         return new Response(await encodePNG(rgba, w, h), {
           headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=300' },

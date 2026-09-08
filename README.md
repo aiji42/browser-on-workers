@@ -6,6 +6,11 @@ URL を渡すとスクリーンショットが返る、**Cloudflare Workers の 
 GET /shot?url=https://example.com  ->  image/png
 ```
 
+- `GET /` — デモ。このブラウザが描いた絵を並べている
+- `GET /js` — ページの JavaScript が動くことを見せるページ。`/js.png` がその自画像
+- `GET /shot?url=...&js=0` — ページの `<script>` を実行せずに描く
+- `GET /health` — Wasm とフォントが読めているか
+
 ## なぜ作ったか
 
 Cloudflare が 2026 年 8 月に [Kitesurf](https://blog.cloudflare.com/kitesurf/) を発表した。Chromium のバイナリを一切使わず、Rust で書いたブラウザエンジンを Wasm にして Workers の V8 isolate の上で動かす、という代物。発表記事には「Chromium より CPU が 3.1 倍、メモリが 7.0 倍少ない」という比較表が載っている。
@@ -26,6 +31,7 @@ Cloudflare が 2026 年 8 月に [Kitesurf](https://blog.cloudflare.com/kitesurf
 | レイアウト | [Taffy](https://github.com/DioxusLabs/taffy) |
 | テキスト整形 | [Parley](https://github.com/linebender/parley) |
 | 描画 | [blitz-paint](https://github.com/DioxusLabs/blitz) |
+| JavaScript | [Boa](https://boajs.dev) ([blitz-vibey-script](https://github.com/DioxusLabs/blitz) 経由。crates.io に無いので vendor した) |
 | 画像のデコード | [image](https://github.com/image-rs/image) (blitz-dom 経由) |
 | PNG 化 | 自前 (`src/png.js`)。Workers に画像の API が無いので |
 | 外向きの取得 | Worker の `fetch()` 1 箇所だけ (`src/outbound.js`) |
@@ -74,21 +80,20 @@ rustup target add wasm32-unknown-unknown
 - **フォントはシステムから取れない。** Workers にフォントが 1 つも無いので、TTF を自分で持ち込んで Parley に登録するしかない。woff2 は Brotli で圧縮されていて Workers 側でほどけないので、TrueType のまま置く。バンドルには埋め込まず Static Assets から読む (Kitesurf の PageRenderer と同じ)。日本語 1 ウェイトで 2.14 MiB あるので、スクリプトサイズの上限に効かせない方が楽で、代わりに cold start で 20〜35 ms かかる
 - **フォントを足すだけでは文字は出ない。** fontique は wasm32 ではシステムフォントのバックエンドが空になる。Parley は「family に無い文字」を script 単位の fallback で探すので、そこが空だと**文字が幅 0 で消える。エラーは出ない**。13 個の generic family と 14 の script に、登録したフォントを手で結び付ける必要がある
 - **同じ family に別の文字集合を入れると、片方が黙って消える。** fontsource のサブセットは name テーブルの family 名が全部同じ (`Noto Sans JP Thin`) なので、Latin と日本語をそのまま渡すと 1 つの family に入る。fontique は weight で 1 face だけを選び、Parley はその face の cmap しか見ないので、weight 400 の face が 2 つあると片方の文字が出ない。`FontInfoOverride` でファイル内の名前を捨てて回避した
-- `eval` は使えない。ページの中の `<script>` を実行しようとすると、そこで詰まる。Kitesurf が Boa (Rust 製の JS エンジン) を Wasm で持ち込んでいるのは、この壁を越えるため
+- **Workers の `eval` 禁止は、Boa には効かない。** Worker のコードが `eval` を呼ぶと `EvalError: Code generation from strings disallowed for this context` になるが、**ページの中の `eval` は動く**。文字列をコードにするのが V8 ではなく Wasm の中の Boa だから。結果として V8 と Boa が同じ isolate に同居する (Kitesurf も同じ構造)
+- **Boa には実行を中断する仕組みが無い。** `Context` にループ回数と再帰の上限を積み、`<script>` とタイマーごとに実時間の予算を見る二段構えにした。`while (true)` は 27 ms で JS の例外になり、**止まるまでに触った DOM はそのまま描かれる**
 
 ## できないこと
 
 スクリーンショットを撮るところまでを目標にしているので、実用のブラウザではない。
 
-- **JavaScript を実行しない** (`<script>` は無視する)。Workers は `eval` を許さないので、
-  ここに手を出すと Kitesurf と同じように JS エンジンを Wasm で持ち込むことになる
-- **CSS の中から参照される画像を取れない。** `background-image: url(...)` は、
-  どのセレクタが適用されるかがカスケードとレイアウトの後にしか決まらないので、
-  HTML を走査する方式では拾えない。2 パス (1 回描いて足りない URL を集め、
-  取得して描き直す) が必要で、これは対応中
+- **JavaScript には実行上限がある。** `while (true)` は 27 ms で止まる。
+  巨大な文字列や配列を作られると `boa_string` の中で panic して Worker が 500 を返す
+  (RangeError を投げるべきところで panic している upstream のバグ)。`?js=0` で戻る
+- **レイアウトが返ってこないページがある。** `ja.wikipedia.org/wiki/コーヒー` は
+  taffy のブロックレイアウトの深い再帰から 300 秒経っても帰らない。JS を切っても再現する
 - フォントに入れた文字しか出ない。いまは Latin と、ひらがな・カタカナ・
   常用漢字あたり。他の言語を出すにはフォントを足す
-- `@font-face` の web font を取りに行かない
 - 動くもの (アニメーション、動画、WebGL) は扱わない
 
 ## ライセンス

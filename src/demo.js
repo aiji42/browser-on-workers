@@ -1,7 +1,8 @@
 // デモのページ。
 //
-// このブラウザは JavaScript を実行しないので、このページも JS を 1 行も使っていない。
-// そうしておくと、このブラウザで自分自身を描いたときにも同じ見た目になる。
+// このブラウザは自分自身を描ける (Worker は自分の workers.dev を fetch できないので、
+// HTML を直接エンジンに渡す経路を使う)。ページの JavaScript も Boa で実行するので、
+// Chrome で見たときと、このブラウザで描いたときの絵が一致する。
 
 const CSS = `
 :root{
@@ -62,6 +63,9 @@ button{
   border-left:3px solid var(--orange); padding:2px 0 2px 14px;
   color:var(--muted); font-size:14px; margin:0 0 14px;
 }
+ul{margin:0 0 14px; padding-left:22px}
+li{margin:0 0 5px}
+a{color:var(--accent)}
 footer{margin-top:56px; padding-top:18px; border-top:1px solid var(--line); font-size:13px; color:var(--muted)}
 `;
 
@@ -86,7 +90,7 @@ p{margin:0;font-size:21px;line-height:1.6;color:#555}
 <div class="left">
   <span class="badge">CLOUDFLARE WORKERS</span>
   <h1>Chromium なしで<br><em>スクリーンショット</em>を撮る</h1>
-  <p>HTML のパースからラスタライズまで、<br>すべて Worker の isolate の中。</p>
+  <p>HTML のパースから JavaScript の実行まで、<br>すべて Worker の isolate の中。</p>
 </div>
 <div class="right">
   <div>HTML <b>html5ever</b></div>
@@ -94,8 +98,71 @@ p{margin:0;font-size:21px;line-height:1.6;color:#555}
   <div>Layout <b>Taffy</b></div>
   <div>Text <b>Parley</b></div>
   <div>Paint <b>blitz-paint</b></div>
-  <div>Rust → <b>wasm32</b></div>
+  <div>JS <b>Boa</b></div>
+  <div>Target <b>wasm32</b></div>
 </div>
+</body></html>`;
+}
+
+/**
+ * JavaScript が動いていることを見せるページ。
+ *
+ * 枠が緑になっているところは、すべてページの `<script>` が書いたもの。
+ * Chrome で開いた絵と、このブラウザが描いた絵 (/js.png) が一致する。
+ */
+export function jsDemoHtml() {
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<title>JavaScript は動く — browser-on-workers</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{margin:0;padding:26px;background:#fff;color:#111;line-height:1.6;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+h1{margin:0 0 6px;font-size:24px;letter-spacing:-.01em}
+.lede{margin:0 0 20px;font-size:14px;color:#666}
+.box{padding:12px 14px;border:2px solid #d5d5d5;background:#f7f7f7;margin:0 0 9px;font-size:17px}
+.box.ok{border-color:#0a7a2f;background:#eaf7ec}
+.box b{color:#0b5cd6}
+.box code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85em;
+  background:#e7eef9;color:#0a4aa8;padding:.1em .3em}
+.lbl{display:inline-block;min-width:118px;font-family:ui-monospace,Menlo,monospace;
+  font-size:11px;letter-spacing:.06em;color:#666;vertical-align:1px}
+.foot{margin:14px 0 0;font-size:13px;color:#666;line-height:1.65}
+.foot code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;
+  background:#f0f0f0;padding:.1em .3em}
+</style></head><body>
+<h1>JavaScript は動く</h1>
+<p class="lede">緑になっている枠は、すべてこのページの <code>&lt;script&gt;</code> が書き換えたものです。</p>
+
+<div class="box" id="dom"><span class="lbl">DOM</span>書き換え前</div>
+<div class="box" id="calc"><span class="lbl">計算</span>実行前</div>
+<div class="box" id="ev"><span class="lbl">eval</span>実行前</div>
+<div class="box" id="timer"><span class="lbl">setTimeout</span>実行前</div>
+<div class="box" id="layout"><span class="lbl">レイアウト参照</span>実行前</div>
+<div class="box" id="guard"><span class="lbl">暴走の停止</span>この枠だけ緑になりません</div>
+<p class="foot">最後に <code>while (true) {}</code> を回しています。実行上限に当たると
+JavaScript がそこで止まるので、この枠は書き換わりません。上の 5 つは、止まる前に
+書かれたものです。</p>
+
+<script>
+  function fill(id, html) {
+    var e = document.getElementById(id);
+    e.innerHTML = '<span class="lbl">' + e.querySelector('.lbl').textContent + '</span>' + html;
+    e.className = 'box ok';
+  }
+  fill('dom', 'この文は <b>Boa</b> が書きました');
+  fill('calc', '2 + 2 = <b>' + (2 + 2) + '</b>');
+  // Workers は eval を禁じているが、Boa が自分でコンパイルするので通る
+  fill('ev', '<code>eval("6*7")</code> = <b>' + eval('6*7') + '</b>');
+  setTimeout(function () { fill('timer', 'タイマーも走りました'); }, 10);
+  // レイアウトが付いた状態でスクリプトを走らせているので、寸法が読める
+  fill('layout', 'body の幅は <b>' + document.body.offsetWidth + '</b> px');
+  // 無限ループは実行上限で止まる。Boa の RuntimeLimitError はページ側の
+  // catch には来ないので、スクリプトはここで終わる。
+  // 止まるまでに触った DOM はそのまま描かれる (上の 5 つが緑のまま残る)
+  var n = 0;
+  while (true) { n++; }
+  // ここには来ない
+</script>
 </body></html>`;
 }
 
@@ -108,9 +175,9 @@ export function demoHtml(origin) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>browser-on-workers — Chromium なしでスクリーンショットを撮る</title>
-<meta name="description" content="HTML のパースから PNG の書き出しまで、すべて Cloudflare Workers の isolate の中で動く小さなブラウザ。">
+<meta name="description" content="HTML のパースから JavaScript の実行まで、すべて Cloudflare Workers の isolate の中で動く小さなブラウザ。">
 <meta property="og:title" content="Chromium なしでスクリーンショットを撮る">
-<meta property="og:description" content="HTML のパースから PNG の書き出しまで、すべて Cloudflare Workers の isolate の中。Stylo と Parley と blitz-paint を wasm32 に載せた。">
+<meta property="og:description" content="HTML のパースから JavaScript の実行まで、すべて Cloudflare Workers の isolate の中。Stylo・Parley・blitz-paint・Boa を wasm32 に載せた。">
 <meta property="og:image" content="${origin}/card.png">
 <meta name="twitter:card" content="summary_large_image">
 <style>${CSS}</style>
@@ -119,17 +186,28 @@ export function demoHtml(origin) {
 <header>
   <span class="tag">CLOUDFLARE WORKERS</span>
   <h1>Chromium なしで、<span>スクリーンショット</span>を撮る</h1>
-  <p class="lede">HTML のパースから PNG の書き出しまで、すべて Worker の isolate の中で動いています。</p>
+  <p class="lede">HTML のパースから JavaScript の実行まで、すべて Worker の isolate の中で動いています。</p>
 </header>
 
 <h2>このブラウザが描いた絵</h2>
-<p>下の画像は、いまこのページを配信している Worker が、その中の Wasm で描いたものです。ブラウザのバイナリはどこにもありません。</p>
+<p>下の画像は、いまこのページを配信している Worker が、その中の Wasm で描いたものです。Chromium のバイナリはどこにもありません。</p>
 
 <figure>
   <img src="${origin}/card.png" width="1200" height="630"
        alt="browser-on-workers の見せ札を、このブラウザ自身が描いた画像">
   <figcaption>この PNG は、このページを配信している Worker が Wasm で描いたもの</figcaption>
 </figure>
+
+<h2>JavaScript も動く</h2>
+<p>ページの <code>&lt;script&gt;</code> を <a href="https://boajs.dev">Boa</a> (Rust で書かれた JavaScript エンジン) で実行しています。Workers は <code>eval</code> と <code>new Function</code> を禁じていますが、Boa が自分でコンパイルするので、<strong>ページの中の <code>eval</code> は通ります</strong>。</p>
+
+<figure>
+  <img src="${origin}/js.png" width="760" height="560"
+       alt="JavaScript が DOM を書き換えたことを示すページを、このブラウザ自身が描いた画像">
+  <figcaption>緑の枠はページの JavaScript が書いたもの。<a href="/js">同じページを自分のブラウザで開く</a>と、絵が一致します</figcaption>
+</figure>
+
+<p class="note">V8 と Boa が同じ isolate に同居する形になります。Worker のコードは V8 で動き、ページのコードは Wasm の中の Boa で動く。Kitesurf も同じ構造です。</p>
 
 <h2>実際のサイトを描く</h2>
 <div class="grid">
@@ -164,15 +242,21 @@ export function demoHtml(origin) {
     <tr><td>レイアウト</td><td>Taffy</td></tr>
     <tr><td>テキスト整形</td><td>Parley</td></tr>
     <tr><td>描画</td><td>blitz-paint + vello_cpu</td></tr>
+    <tr><td>JavaScript</td><td>Boa (blitz-vibey-script 経由)</td></tr>
     <tr><td>PNG 化</td><td>自前。Workers に画像の API が無いので</td></tr>
     <tr><td>外向きの取得</td><td>Worker の <code>fetch()</code> 1 箇所だけ</td></tr>
   </tbody>
 </table>
-<p>Rust を <code>wasm32-unknown-unknown</code> にビルドして Worker から呼んでいます。Wasm は 10 MB ほど。</p>
+<p>Rust を <code>wasm32-unknown-unknown</code> にビルドして Worker から呼んでいます。Wasm は 15 MB ほど。フォントは Static Assets に置いて、起動時に読んでいます。</p>
 
 <h2>できないこと</h2>
-<p><strong>JavaScript を実行しません。</strong> Workers は <code>eval</code> と <code>new Function</code> を禁じているので、文字列からコードを作れません。ブラウザを Workers に載せると、いちばん基本的なところに穴があきます。</p>
-<p>このページも JavaScript を 1 行も使っていません。使うと、このブラウザで自分自身を描けなくなるからです。</p>
+<p>スクリーンショットを撮るところまでを目標にしているので、実用のブラウザではありません。</p>
+<ul>
+  <li>フォントに入れた文字しか出ません。いまは Latin と、ひらがな・カタカナ・漢字</li>
+  <li>動くもの (アニメーション、動画、WebGL) は扱いません</li>
+  <li>ページの JavaScript には実行上限があります。<code>while (true)</code> は 27 ms ほどで止まります (止まるまでに書き換えた DOM はそのまま描かれます)</li>
+  <li>レイアウトが返ってこないページがまだあります</li>
+</ul>
 
 <footer>
   Rust で書いたブラウザエンジンを Wasm にして Cloudflare Workers の V8 isolate で動かす、という Cloudflare の Kitesurf を見て、同じ構成を公開情報だけから組んでみたものです。

@@ -1,9 +1,9 @@
-//! # このディレクトリは upstream の写し
+//! # このディレクトリは upstream のコピー
 //!
 //! `blitz-vibey-script` は crates.io に出ていない。Blitz の workspace
 //! (`DioxusLabs/blitz`) の中にだけあるクレートなので、`packages/blitz-vibey-script`
 //! を rev `4507cd7` (`script: fix panic in replaceChild ...`、これが最後に
-//! このクレートを触ったコミット) からそのまま写してある。
+//! このクレートを触ったコミット) からそのままコピーしてある。
 //!
 //! upstream との差は 4 つ。
 //!

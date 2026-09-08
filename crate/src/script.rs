@@ -9,7 +9,7 @@
 //!
 //! DOM の口 (`document.getElementById`、`innerHTML`、イベント、タイマー) は
 //! `blitz-vibey-script` が Boa と blitz-dom の間に張っている。crates.io に
-//! 出ていないクレートなので `vendor/blitz-vibey-script` に写してある
+//! 出ていないクレートなので `vendor/blitz-vibey-script` にコピーしてある
 //! (経緯はそちらの `src/lib.rs` の頭)。
 //!
 //! # 駆動の順

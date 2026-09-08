@@ -69,7 +69,7 @@ pub struct TableNetProvider {
     ///
     /// stylesheet を返すと、その中の `@import` や `@font-face` のために blitz-dom が
     /// **`fetch` の中からさらに `fetch` を呼ぶ**。ここで `RESOURCES` の Mutex を
-    /// 取っていると自分自身と競合して固まるので、表は描画の入口で 1 度だけ写しておく
+    /// 取っていると自分自身と競合して固まるので、表は描画の入口で 1 度だけコピーしておく
     table: Arc<HashMap<String, Bytes>>,
     /// `fetch` が呼ばれた回数。取得が増えなくなったら描画ループを止める目印に使う
     fetches: AtomicUsize,
@@ -88,7 +88,7 @@ impl TableNetProvider {
         })
     }
 
-    /// いまの表を写して作る
+    /// いまの表をコピーして作る
     pub fn current() -> Arc<Self> {
         let guard = RESOURCES.lock().unwrap_or_else(|e| e.into_inner());
         let table = guard.as_ref().cloned().unwrap_or_default();
@@ -781,7 +781,7 @@ mod tests {
         // 引けなかったぶんだけが記録に残る
         assert_eq!(provider.misses(), vec!["https://y.test/"]);
 
-        // 描画の途中で表を差し替えても、その描画は始めに写した表で最後まで進む
+        // 描画の途中で表を差し替えても、その描画は始めにコピーした表で最後まで進む
         clear_resources();
         assert!(provider.lookup("https://x.test/").is_some());
         assert!(TableNetProvider::current().lookup("https://x.test/").is_none());

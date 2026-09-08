@@ -108,7 +108,8 @@ p{margin:0;font-size:21px;line-height:1.6;color:#555}
  * JavaScript が動いていることを見せるページ。
  *
  * 枠が緑になっているところは、すべてページの `<script>` が書いたもの。
- * Chrome で開いた絵と、このブラウザが描いた絵 (/js.png) が一致する。
+ * Chrome で開いたときと、このブラウザが描いた絵 (/js.png) で、書き換わった
+ * 中身が一致する (書体は違う。こちらは持ち込んだ Noto Sans JP と IBM Plex Mono)。
  */
 export function jsDemoHtml() {
   return `<!doctype html><html lang="ja"><head><meta charset="utf-8">
@@ -204,7 +205,7 @@ export function demoHtml(origin) {
 <figure>
   <img src="${origin}/js.png" width="760" height="560"
        alt="JavaScript が DOM を書き換えたことを示すページを、このブラウザ自身が描いた画像">
-  <figcaption>緑の枠はページの JavaScript が書いたもの。<a href="/js">同じページを自分のブラウザで開く</a>と、絵が一致します</figcaption>
+  <figcaption>緑の枠はページの JavaScript が書いたもの。<a href="/js">同じページを自分のブラウザで開く</a>と、書き換わった中身が一致します (書体は違います)</figcaption>
 </figure>
 
 <p class="note">V8 と Boa が同じ isolate に同居する形になります。Worker のコードは V8 で動き、ページのコードは Wasm の中の Boa で動く。Kitesurf も同じ構造です。</p>

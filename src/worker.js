@@ -17,8 +17,8 @@ import { fetchHtml, fetchStylesheets, fetchImages, fetchResources } from './outb
 // wrangler.jsonc の rules で .wasm は CompiledWasm として読み込まれる
 import wasmModule from '../crate/pkg/kitesurf_clone_bg.wasm';
 import initWasm, {
-  add_font, add_resource, clear_resources, missed_resources, render_png_rgba,
-  render_png_rgba_no_js, last_js_errors, last_panic,
+  add_font, set_generic_lead, add_resource, clear_resources, missed_resources,
+  render_png_rgba, render_png_rgba_no_js, last_js_errors, last_panic,
 } from '../crate/pkg/kitesurf_clone.js';
 
 // Workers にはシステムフォントが 1 つも無いので、字を出すには持ち込むしかない。
@@ -34,7 +34,16 @@ import initWasm, {
 const FONTS = [
   ['/fonts/sans-regular.ttf', 'sans'],
   ['/fonts/sans-bold.ttf', 'sans'],   // 同じ family に入れると weight が解決される
+  ['/fonts/mono-regular.ttf', 'mono'],
   ['/fonts/jp-regular.ttf', 'jp'],    // 文字集合が違うので別 family。同じにすると片方が消える
+];
+
+// 既定では generic family の全部に、登録順 (sans -> mono -> jp) で入る。
+// それだと `monospace` を指したページも sans で描かれるので、等幅の generic だけ
+// mono を先頭にする。mono は Latin しか持たないので、後ろに jp を残す
+const GENERIC_LEAD = [
+  ['monospace', ['mono', 'jp']],
+  ['ui-monospace', ['mono', 'jp']],
 ];
 
 // フォントの登録は isolate ごとに 1 度だけ。2 度呼ぶと同じ face が二重に入る。
@@ -56,7 +65,9 @@ const ensureWasm = (env, request) => (ready ??= (async () => {
     const faces = add_font(bytes, family);
     fonts.push({ path, family, kb: Math.round(bytes.length / 1024), faces, fetchMs, addMs: Date.now() - t });
   }
-  boot = { initMs, fonts };
+  // フォントを全部登録し終わってから並べ替える (呼ぶたびに FontContext を組み直すので)
+  const lead = GENERIC_LEAD.map(([g, fams]) => [g, set_generic_lead(g, fams)]);
+  boot = { initMs, fonts, lead };
 })());
 
 // Rust 側の panic は `RuntimeError: unreachable` として届く (wasm は unwind できない)。

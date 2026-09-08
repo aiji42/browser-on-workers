@@ -14,5 +14,8 @@
     "directory": "./public",
     "binding": "ASSETS"
   },
+  // 明示しておく (既定値と同じ)。レイアウトから返ってこないページを踏んだときに、
+  // ここで止まる。ja.wikipedia.org/wiki/コーヒー が実際にそうなる
+  "limits": { "cpu_ms": 30000 },
   "observability": { "enabled": true }
 }

@@ -36,6 +36,7 @@ Cloudflare が 2026 年 8 月に [Kitesurf](https://blog.cloudflare.com/kitesurf
 | PNG 化 | 自前 (`src/png.js`)。Workers に画像の API が無いので |
 | 外向きの取得 | Worker の `fetch()` 1 箇所だけ (`src/outbound.js`) |
 | フォントの置き場 | Static Assets (`public/fonts/`)。実行時に `env.ASSETS` から読む |
+| 等幅 | `set_generic_lead('monospace', ['mono','jp'])` で `monospace` だけ順序を変える |
 
 Rust 側は wasm32-unknown-unknown 向けにビルドして wasm-bindgen で JS から呼ぶ。
 
@@ -65,12 +66,18 @@ npm run build     # Rust を wasm32 にビルドする
 npm run dev       # ローカルで起動
 ```
 
-Rust のツールチェーンが必要。
+Rust のツールチェーンが必要。`blitz-vibey-script` が要求するので **1.90 以上**。
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 rustup target add wasm32-unknown-unknown
 ```
+
+`Cargo.lock` に GitHub の source が入っている (`[patch.crates-io]` で blitz を
+特定の rev に寄せているため) ので、ビルドする環境から git に届く必要がある。
+
+テストは `cargo test` で 39 本。うち fixture を使うものは、第三者のページの HTML を
+リポジトリに入れていない (`crate/fixtures/` は gitignore) ので、無ければ skip する。
 
 ## 分かったこと・詰まったこと
 

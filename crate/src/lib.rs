@@ -173,6 +173,60 @@ struct FontRegistry {
 
 static FONTS: Mutex<Option<FontRegistry>> = Mutex::new(None);
 
+/// generic family ごとに「先頭に置く family 名」。`set_generic_lead` で入れる。
+///
+/// 既定では全部の generic family に、登録した family が登録順で入る。それだと
+/// `monospace` を指定したページも sans のフォントで描かれてしまうので、
+/// generic ごとに順序を変える口を用意する
+static GENERIC_LEAD: Mutex<Vec<(GenericFamily, Vec<String>)>> = Mutex::new(Vec::new());
+
+/// CSS の generic family 名 (`monospace` など) を fontique の enum に直す
+fn parse_generic(name: &str) -> Option<GenericFamily> {
+    Some(match name {
+        "serif" => GenericFamily::Serif,
+        "sans-serif" => GenericFamily::SansSerif,
+        "monospace" => GenericFamily::Monospace,
+        "cursive" => GenericFamily::Cursive,
+        "fantasy" => GenericFamily::Fantasy,
+        "system-ui" => GenericFamily::SystemUi,
+        "ui-serif" => GenericFamily::UiSerif,
+        "ui-sans-serif" => GenericFamily::UiSansSerif,
+        "ui-monospace" => GenericFamily::UiMonospace,
+        "ui-rounded" => GenericFamily::UiRounded,
+        "emoji" => GenericFamily::Emoji,
+        "math" => GenericFamily::Math,
+        "fangsong" => GenericFamily::FangSong,
+        _ => return None,
+    })
+}
+
+/// この generic family では、この family を先に探す、と決める。
+///
+/// `set_generic_lead("monospace", vec!["mono", "jp"])` のように呼ぶと、CSS が
+/// `monospace` を指したときに `mono` -> `jp` -> (残りは登録順) の順で文字を探す。
+/// `add_font` を全部呼び終わったあとに呼ぶ (呼ぶたびに `FontContext` を組み直す)。
+///
+/// 戻り値は generic family 名を解釈できたかどうか
+#[wasm_bindgen]
+pub fn set_generic_lead(generic: &str, families: Vec<String>) -> bool {
+    let Some(g) = parse_generic(generic) else {
+        return false;
+    };
+    {
+        let mut lead = GENERIC_LEAD.lock().unwrap_or_else(|e| e.into_inner());
+        let key = std::mem::discriminant(&g);
+        lead.retain(|(existing, _)| std::mem::discriminant(existing) != key);
+        lead.push((g, families));
+    }
+    // すでに登録済みのフォントがあるなら、新しい順序で組み直す
+    let mut guard = FONTS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(r) = guard.take() {
+        let ctx = build_font_ctx(&r.fonts).0;
+        *guard = Some(FontRegistry { fonts: r.fonts, ctx });
+    }
+    true
+}
+
 /// フォントを 1 本登録する。`render_png_rgba` より先に、フォントごとに 1 回ずつ呼ぶ。
 ///
 /// - `bytes` は TTF / OTF / TTC の中身
@@ -251,6 +305,8 @@ fn build_font_ctx(fonts: &[(Blob<u8>, String)]) -> (FontContext, Vec<usize>) {
     // Noto Sans JP の Latin サブセットと日本語サブセットは中の名前が同じなので、
     // それに任せると 1 つの family に混ざって weight の一致で片方しか選ばれなくなる
     let mut family_ids: Vec<FamilyId> = Vec::new();
+    // family 名から FamilyId を引けるようにしておく (generic ごとの並べ替えに使う)
+    let mut named: Vec<(String, FamilyId)> = Vec::new();
     let mut counts = Vec::with_capacity(fonts.len());
     for (blob, family) in fonts {
         let registered = collection.register_fonts(
@@ -264,14 +320,41 @@ fn build_font_ctx(fonts: &[(Blob<u8>, String)]) -> (FontContext, Vec<usize>) {
         for (id, _) in registered {
             if !family_ids.contains(&id) {
                 family_ids.push(id);
+                named.push((family.clone(), id));
             }
         }
     }
 
-    // generic family は登録順。先に登録した family から順に文字を探す
+    // generic family は既定では登録順。`set_generic_lead` で指定があるものだけ、
+    // 指定された family を先頭に寄せる (残りは登録順のまま)
+    let lead = GENERIC_LEAD.lock().unwrap_or_else(|e| e.into_inner());
     for generic in GENERIC_FAMILIES {
-        collection.set_generic_families(generic, family_ids.iter().copied());
+        let key = std::mem::discriminant(&generic);
+        let ordered: Vec<FamilyId> = match lead
+            .iter()
+            .find(|(g, _)| std::mem::discriminant(g) == key)
+        {
+            Some((_, names)) => {
+                let mut first: Vec<FamilyId> = Vec::new();
+                for name in names {
+                    for (n, id) in &named {
+                        if n == name && !first.contains(id) {
+                            first.push(*id);
+                        }
+                    }
+                }
+                let rest: Vec<FamilyId> = family_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| !first.contains(id))
+                    .collect();
+                first.into_iter().chain(rest).collect()
+            }
+            None => family_ids.clone(),
+        };
+        collection.set_generic_families(generic, ordered.into_iter());
     }
+    drop(lead);
 
     // script fallback は、その script の代表文字を持つ family を先頭に寄せる。
     // 順序は安定なので、同じ側に入った family どうしは登録順のまま

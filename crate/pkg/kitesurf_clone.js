@@ -17,9 +17,9 @@
  * @returns {number}
  */
 export function add_font(bytes, family) {
-    const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_export2);
+    const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_export);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(family, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+    const ptr1 = passStringToWasm0(family, wasm.__wbindgen_export, wasm.__wbindgen_export2);
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.add_font(ptr0, len0, ptr1, len1);
     return ret >>> 0;
@@ -45,9 +45,9 @@ export function add_resource(url, bytes) {
     let deferred3_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray8ToWasm0(bytes, wasm.__wbindgen_export2);
+        const ptr1 = passArray8ToWasm0(bytes, wasm.__wbindgen_export);
         const len1 = WASM_VECTOR_LEN;
         wasm.add_resource(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
@@ -234,9 +234,9 @@ export function missed_resources() {
 export function render_png_rgba(html, base_url, width, height) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(html, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const ptr0 = passStringToWasm0(html, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(base_url, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const ptr1 = passStringToWasm0(base_url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
         wasm.render_png_rgba(retptr, ptr0, len0, ptr1, len1, width, height);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
@@ -263,9 +263,9 @@ export function render_png_rgba(html, base_url, width, height) {
 export function render_png_rgba_no_js(html, base_url, width, height) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(html, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const ptr0 = passStringToWasm0(html, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(base_url, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const ptr1 = passStringToWasm0(base_url, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
         wasm.render_png_rgba_no_js(retptr, ptr0, len0, ptr1, len1, width, height);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
@@ -297,6 +297,27 @@ export function resource_urls() {
 }
 
 /**
+ * この generic family では、この family を先に探す、と決める。
+ *
+ * `set_generic_lead("monospace", vec!["mono", "jp"])` のように呼ぶと、CSS が
+ * `monospace` を指したときに `mono` -> `jp` -> (残りは登録順) の順で文字を探す。
+ * `add_font` を全部呼び終わったあとに呼ぶ (呼ぶたびに `FontContext` を組み直す)。
+ *
+ * 戻り値は generic family 名を解釈できたかどうか
+ * @param {string} generic
+ * @param {string[]} families
+ * @returns {boolean}
+ */
+export function set_generic_lead(generic, families) {
+    const ptr0 = passStringToWasm0(generic, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayJsValueToWasm0(families, wasm.__wbindgen_export);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.set_generic_lead(ptr0, len0, ptr1, len1);
+    return ret !== 0;
+}
+
+/**
  * ページの `<script>` を実行するかどうかを切り替える。既定は実行する。
  *
  * 実ページの崩れが JS のせいなのかを切り分けたいときに `false` にする。
@@ -312,6 +333,14 @@ function __wbg_get_imports() {
         __wbg___wbindgen_is_undefined_8c687d0b90d5b524: function(arg0) {
             const ret = getObject(arg0) === undefined;
             return ret;
+        },
+        __wbg___wbindgen_string_get_92ab86bb19cbc12f: function(arg0, arg1) {
+            const obj = getObject(arg1);
+            const ret = typeof(obj) === 'string' ? obj : undefined;
+            var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            var len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
         __wbg___wbindgen_throw_5d9e815e6fdf150f: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
@@ -446,7 +475,7 @@ function handleError(f, args) {
     try {
         return f.apply(this, args);
     } catch (e) {
-        wasm.__wbindgen_export(addHeapObject(e));
+        wasm.__wbindgen_export3(addHeapObject(e));
     }
 }
 
@@ -463,6 +492,16 @@ function passArray8ToWasm0(arg, malloc) {
     const ptr = malloc(arg.length * 1, 1) >>> 0;
     getUint8ArrayMemory0().set(arg, ptr / 1);
     WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+function passArrayJsValueToWasm0(array, malloc) {
+    const ptr = malloc(array.length * 4, 4) >>> 0;
+    const mem = getDataViewMemory0();
+    for (let i = 0; i < array.length; i++) {
+        mem.setUint32(ptr + 4 * i, addHeapObject(array[i]), true);
+    }
+    WASM_VECTOR_LEN = array.length;
     return ptr;
 }
 

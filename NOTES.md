@@ -221,6 +221,16 @@ jp-regular     →× ←× ✓× ※× あ○ 日○ A○
 `subset-font` は 1 つのファイルからしか作れないので、拾うにはフォントの結合が要る。
 **無い文字は 0 幅で黙って消える**ので、HTML 側でこれらを使わないことにした。
 
+### 等幅だけ順序を変える
+
+generic family には登録した family が全部、登録順で入る。`sans` を先頭にしないと
+本文が等幅になるので `sans` -> `mono` -> `jp` の順で登録するが、そうすると
+**`monospace` を指したページも sans で描かれる**。ページの `<code>` が本文と
+同じ書体になってしまう。
+
+`set_generic_lead(generic, families)` を足して、`monospace` と `ui-monospace`
+だけ `mono` を先頭に寄せた。`mono` は Latin しか持たないので、後ろに `jp` を残す。
+
 ### fallback の順序
 
 generic family (`sans-serif` など) は登録順。Parley は先頭の family から順に cmap を見て、

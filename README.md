@@ -95,6 +95,16 @@ rustup target add wasm32-unknown-unknown
 テストは `cargo test` で 39 本。うち fixture を使うものは、第三者のページの HTML を
 リポジトリに入れていない (`crate/fixtures/` は gitignore) ので、無ければ skip する。
 
+デプロイは `npm run deploy`。wrangler のログインはこのディレクトリに閉じている
+(`XDG_CONFIG_HOME` を `.wrangler-home` に向けている) ので、他のアカウントの
+ログインとは混ざらない。
+
+```bash
+npm run cf:login    # このディレクトリ用にログイン
+npm run cf:whoami   # どのアカウントか確認
+npm run cf -- <cmd> # 任意の wrangler コマンド
+```
+
 ## 分かったこと・詰まったこと
 
 作りながら踏んだところを `NOTES.md` に書いている。要点だけ:

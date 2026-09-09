@@ -12,3 +12,4 @@ public/glue.js
 
 # 切り分けに使った第三者のページの HTML (952KB)。テストは無ければ skip する
 crate/fixtures/
+.wrangler-home/
